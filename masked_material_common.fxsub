@@ -1,0 +1,2753 @@
+// ============================================================
+// masked_material_common.fxsub
+// Mask-based multi-layer material - Core shader
+//
+// ray-mmd material_common_2.0.fxsub compatible G-Buffer output
+// Per-layer texture map support
+// ============================================================
+
+// ==================== Validation ====================
+
+#ifndef LAYER_COUNT
+    #define LAYER_COUNT 2
+#endif
+
+#ifndef MASK_PACKING
+    #define _MASK_PACKING_EARLY 0
+#else
+    #define _MASK_PACKING_EARLY MASK_PACKING
+#endif
+
+#if _MASK_PACKING_EARLY == 0
+    #if LAYER_COUNT < 2 || LAYER_COUNT > 6
+        #error LAYER_COUNT must be in range 2-6 (MASK_PACKING=0)
+    #endif
+#else
+    #if LAYER_COUNT < 2 || LAYER_COUNT > 8
+        #error LAYER_COUNT must be in range 2-8 (MASK_PACKING=1)
+    #endif
+#endif
+
+// ==================== Constants ====================
+
+#define MIDPOINT_8_BIT        (127.0f / 255.0f)
+#define MAX_FRACTIONAL_8_BIT  (255.0f / 256.0f)
+#define EMISSIVE_EPSILON      (2.0f / 255.0f)
+#define ALPHA_THRESHOLD       0.999
+
+#define SHADINGMODELID_DEFAULT    0
+#define SHADINGMODELID_SKIN       1
+#define SHADINGMODELID_EMISSIVE   2
+#define SHADINGMODELID_ANISOTROPY 3
+#define SHADINGMODELID_GLASS      4
+#define SHADINGMODELID_CLOTH      5
+#define SHADINGMODELID_CLEAR_COAT 6
+#define SHADINGMODELID_SUBSURFACE 7
+#define SHADINGMODELID_CEL        8
+#define SHADINGMODELID_TONEBASED  9
+
+// ==================== Layer Default Values ====================
+// Set default values for undefined parameters.
+// Covers base material properties + texture map settings per layer.
+
+// ====================================================================
+// Default value definitions via macros
+// HLSL preprocessor does not allow #ifndef inside #define,
+// so each layer x parameter must be enumerated individually.
+// ====================================================================
+
+// -------------------- Layer 0 --------------------
+#ifndef L0_ALBEDO
+    #define L0_ALBEDO float3(1, 1, 1)
+#endif
+#ifndef L0_ALBEDO_MAP_FROM
+    #define L0_ALBEDO_MAP_FROM 0
+#endif
+#ifndef L0_ALBEDO_MAP_FILE
+    #define L0_ALBEDO_MAP_FILE "textures/L0_albedo.png"
+#endif
+#ifndef L0_ALBEDO_APPLY_DIFFUSE
+    #define L0_ALBEDO_APPLY_DIFFUSE 1
+#endif
+#ifndef L0_ALBEDO_SUB_MAP_FROM
+    #define L0_ALBEDO_SUB_MAP_FROM 0
+#endif
+#ifndef L0_ALBEDO_SUB_MAP_FILE
+    #define L0_ALBEDO_SUB_MAP_FILE "textures/L0_albedo_sub.png"
+#endif
+#ifndef L0_ALBEDO_SUB_ENABLE
+    #define L0_ALBEDO_SUB_ENABLE 1
+#endif
+#ifndef L0_SMOOTHNESS
+    #define L0_SMOOTHNESS 0.0
+#endif
+#ifndef L0_SMOOTHNESS_MAP_FROM
+    #define L0_SMOOTHNESS_MAP_FROM 0
+#endif
+#ifndef L0_SMOOTHNESS_MAP_FILE
+    #define L0_SMOOTHNESS_MAP_FILE "textures/L0_smoothness.png"
+#endif
+#ifndef L0_SMOOTHNESS_MAP_SWIZZLE
+    #define L0_SMOOTHNESS_MAP_SWIZZLE 0
+#endif
+#ifndef L0_SMOOTHNESS_MAP_TYPE
+    #define L0_SMOOTHNESS_MAP_TYPE 0
+#endif
+#ifndef L0_SMOOTHNESS_MAP_LOOP
+    #define L0_SMOOTHNESS_MAP_LOOP 1.0
+#endif
+#ifndef L0_METALNESS
+    #define L0_METALNESS 0.0
+#endif
+#ifndef L0_METALNESS_MAP_FROM
+    #define L0_METALNESS_MAP_FROM 0
+#endif
+#ifndef L0_METALNESS_MAP_FILE
+    #define L0_METALNESS_MAP_FILE "textures/L0_metalness.png"
+#endif
+#ifndef L0_METALNESS_MAP_SWIZZLE
+    #define L0_METALNESS_MAP_SWIZZLE 0
+#endif
+#ifndef L0_METALNESS_MAP_LOOP
+    #define L0_METALNESS_MAP_LOOP 1.0
+#endif
+#ifndef L0_SPECULAR
+    #define L0_SPECULAR 0.5
+#endif
+#ifndef L0_SPECULAR_MAP_FROM
+    #define L0_SPECULAR_MAP_FROM 0
+#endif
+#ifndef L0_SPECULAR_MAP_FILE
+    #define L0_SPECULAR_MAP_FILE "textures/L0_specular.png"
+#endif
+#ifndef L0_SPECULAR_MAP_SWIZZLE
+    #define L0_SPECULAR_MAP_SWIZZLE 0
+#endif
+#ifndef L0_SPECULAR_MAP_LOOP
+    #define L0_SPECULAR_MAP_LOOP 1.0
+#endif
+#ifndef L0_NORMAL_MAP_FROM
+    #define L0_NORMAL_MAP_FROM 0
+#endif
+#ifndef L0_NORMAL_MAP_FILE
+    #define L0_NORMAL_MAP_FILE "textures/L0_normal.png"
+#endif
+#ifndef L0_NORMAL_MAP_TYPE
+    #define L0_NORMAL_MAP_TYPE 0
+#endif
+#ifndef L0_NORMAL_MAP_SCALE
+    #define L0_NORMAL_MAP_SCALE 1.0
+#endif
+#ifndef L0_NORMAL_MAP_LOOP
+    #define L0_NORMAL_MAP_LOOP 1.0
+#endif
+#ifndef L0_NORMAL_SUB_MAP_FROM
+    #define L0_NORMAL_SUB_MAP_FROM 0
+#endif
+#ifndef L0_NORMAL_SUB_MAP_FILE
+    #define L0_NORMAL_SUB_MAP_FILE "textures/L0_normal_sub.png"
+#endif
+#ifndef L0_NORMAL_SUB_MAP_TYPE
+    #define L0_NORMAL_SUB_MAP_TYPE 0
+#endif
+#ifndef L0_NORMAL_SUB_MAP_SCALE
+    #define L0_NORMAL_SUB_MAP_SCALE 1.0
+#endif
+#ifndef L0_NORMAL_SUB_MAP_LOOP
+    #define L0_NORMAL_SUB_MAP_LOOP 1.0
+#endif
+#ifndef L0_OCCLUSION_MAP_FROM
+    #define L0_OCCLUSION_MAP_FROM 0
+#endif
+#ifndef L0_OCCLUSION_MAP_FILE
+    #define L0_OCCLUSION_MAP_FILE "textures/L0_occlusion.png"
+#endif
+#ifndef L0_OCCLUSION_MAP_SWIZZLE
+    #define L0_OCCLUSION_MAP_SWIZZLE 0
+#endif
+#ifndef L0_OCCLUSION_MAP_LOOP
+    #define L0_OCCLUSION_MAP_LOOP 1.0
+#endif
+#ifndef L0_EMISSIVE
+    #define L0_EMISSIVE float3(0, 0, 0)
+#endif
+#ifndef L0_EMISSIVE_INTENSITY
+    #define L0_EMISSIVE_INTENSITY 0.0
+#endif
+#ifndef L0_EMISSIVE_MAP_FROM
+    #define L0_EMISSIVE_MAP_FROM 0
+#endif
+#ifndef L0_EMISSIVE_MAP_FILE
+    #define L0_EMISSIVE_MAP_FILE "textures/L0_emissive.png"
+#endif
+#ifndef L0_EMISSIVE_MAP_LOOP
+    #define L0_EMISSIVE_MAP_LOOP 1.0
+#endif
+#ifndef L0_SHADING_MODEL
+    #define L0_SHADING_MODEL 0
+#endif
+#ifndef L0_CUSTOM_A
+    #define L0_CUSTOM_A 0.0
+#endif
+#ifndef L0_CUSTOM_B
+    #define L0_CUSTOM_B float3(0, 0, 0)
+#endif
+
+// -------------------- Layer 1 --------------------
+#ifndef L1_ALBEDO
+    #define L1_ALBEDO float3(1, 1, 1)
+#endif
+#ifndef L1_ALBEDO_MAP_FROM
+    #define L1_ALBEDO_MAP_FROM 0
+#endif
+#ifndef L1_ALBEDO_MAP_FILE
+    #define L1_ALBEDO_MAP_FILE "textures/L1_albedo.png"
+#endif
+#ifndef L1_ALBEDO_APPLY_DIFFUSE
+    #define L1_ALBEDO_APPLY_DIFFUSE 1
+#endif
+#ifndef L1_ALBEDO_SUB_MAP_FROM
+    #define L1_ALBEDO_SUB_MAP_FROM 0
+#endif
+#ifndef L1_ALBEDO_SUB_MAP_FILE
+    #define L1_ALBEDO_SUB_MAP_FILE "textures/L1_albedo_sub.png"
+#endif
+#ifndef L1_ALBEDO_SUB_ENABLE
+    #define L1_ALBEDO_SUB_ENABLE 1
+#endif
+#ifndef L1_SMOOTHNESS
+    #define L1_SMOOTHNESS 0.0
+#endif
+#ifndef L1_SMOOTHNESS_MAP_FROM
+    #define L1_SMOOTHNESS_MAP_FROM 0
+#endif
+#ifndef L1_SMOOTHNESS_MAP_FILE
+    #define L1_SMOOTHNESS_MAP_FILE "textures/L1_smoothness.png"
+#endif
+#ifndef L1_SMOOTHNESS_MAP_SWIZZLE
+    #define L1_SMOOTHNESS_MAP_SWIZZLE 0
+#endif
+#ifndef L1_SMOOTHNESS_MAP_TYPE
+    #define L1_SMOOTHNESS_MAP_TYPE 0
+#endif
+#ifndef L1_SMOOTHNESS_MAP_LOOP
+    #define L1_SMOOTHNESS_MAP_LOOP 1.0
+#endif
+#ifndef L1_METALNESS
+    #define L1_METALNESS 0.0
+#endif
+#ifndef L1_METALNESS_MAP_FROM
+    #define L1_METALNESS_MAP_FROM 0
+#endif
+#ifndef L1_METALNESS_MAP_FILE
+    #define L1_METALNESS_MAP_FILE "textures/L1_metalness.png"
+#endif
+#ifndef L1_METALNESS_MAP_SWIZZLE
+    #define L1_METALNESS_MAP_SWIZZLE 0
+#endif
+#ifndef L1_METALNESS_MAP_LOOP
+    #define L1_METALNESS_MAP_LOOP 1.0
+#endif
+#ifndef L1_SPECULAR
+    #define L1_SPECULAR 0.5
+#endif
+#ifndef L1_SPECULAR_MAP_FROM
+    #define L1_SPECULAR_MAP_FROM 0
+#endif
+#ifndef L1_SPECULAR_MAP_FILE
+    #define L1_SPECULAR_MAP_FILE "textures/L1_specular.png"
+#endif
+#ifndef L1_SPECULAR_MAP_SWIZZLE
+    #define L1_SPECULAR_MAP_SWIZZLE 0
+#endif
+#ifndef L1_SPECULAR_MAP_LOOP
+    #define L1_SPECULAR_MAP_LOOP 1.0
+#endif
+#ifndef L1_NORMAL_MAP_FROM
+    #define L1_NORMAL_MAP_FROM 0
+#endif
+#ifndef L1_NORMAL_MAP_FILE
+    #define L1_NORMAL_MAP_FILE "textures/L1_normal.png"
+#endif
+#ifndef L1_NORMAL_MAP_TYPE
+    #define L1_NORMAL_MAP_TYPE 0
+#endif
+#ifndef L1_NORMAL_MAP_SCALE
+    #define L1_NORMAL_MAP_SCALE 1.0
+#endif
+#ifndef L1_NORMAL_MAP_LOOP
+    #define L1_NORMAL_MAP_LOOP 1.0
+#endif
+#ifndef L1_NORMAL_SUB_MAP_FROM
+    #define L1_NORMAL_SUB_MAP_FROM 0
+#endif
+#ifndef L1_NORMAL_SUB_MAP_FILE
+    #define L1_NORMAL_SUB_MAP_FILE "textures/L1_normal_sub.png"
+#endif
+#ifndef L1_NORMAL_SUB_MAP_TYPE
+    #define L1_NORMAL_SUB_MAP_TYPE 0
+#endif
+#ifndef L1_NORMAL_SUB_MAP_SCALE
+    #define L1_NORMAL_SUB_MAP_SCALE 1.0
+#endif
+#ifndef L1_NORMAL_SUB_MAP_LOOP
+    #define L1_NORMAL_SUB_MAP_LOOP 1.0
+#endif
+#ifndef L1_OCCLUSION_MAP_FROM
+    #define L1_OCCLUSION_MAP_FROM 0
+#endif
+#ifndef L1_OCCLUSION_MAP_FILE
+    #define L1_OCCLUSION_MAP_FILE "textures/L1_occlusion.png"
+#endif
+#ifndef L1_OCCLUSION_MAP_SWIZZLE
+    #define L1_OCCLUSION_MAP_SWIZZLE 0
+#endif
+#ifndef L1_OCCLUSION_MAP_LOOP
+    #define L1_OCCLUSION_MAP_LOOP 1.0
+#endif
+#ifndef L1_EMISSIVE
+    #define L1_EMISSIVE float3(0, 0, 0)
+#endif
+#ifndef L1_EMISSIVE_INTENSITY
+    #define L1_EMISSIVE_INTENSITY 0.0
+#endif
+#ifndef L1_EMISSIVE_MAP_FROM
+    #define L1_EMISSIVE_MAP_FROM 0
+#endif
+#ifndef L1_EMISSIVE_MAP_FILE
+    #define L1_EMISSIVE_MAP_FILE "textures/L1_emissive.png"
+#endif
+#ifndef L1_EMISSIVE_MAP_LOOP
+    #define L1_EMISSIVE_MAP_LOOP 1.0
+#endif
+#ifndef L1_SHADING_MODEL
+    #define L1_SHADING_MODEL 0
+#endif
+#ifndef L1_CUSTOM_A
+    #define L1_CUSTOM_A 0.0
+#endif
+#ifndef L1_CUSTOM_B
+    #define L1_CUSTOM_B float3(0, 0, 0)
+#endif
+
+// -------------------- Layer 2 --------------------
+#ifndef L2_ALBEDO
+    #define L2_ALBEDO float3(1, 1, 1)
+#endif
+#ifndef L2_ALBEDO_MAP_FROM
+    #define L2_ALBEDO_MAP_FROM 0
+#endif
+#ifndef L2_ALBEDO_MAP_FILE
+    #define L2_ALBEDO_MAP_FILE "textures/L2_albedo.png"
+#endif
+#ifndef L2_ALBEDO_APPLY_DIFFUSE
+    #define L2_ALBEDO_APPLY_DIFFUSE 1
+#endif
+#ifndef L2_ALBEDO_SUB_MAP_FROM
+    #define L2_ALBEDO_SUB_MAP_FROM 0
+#endif
+#ifndef L2_ALBEDO_SUB_MAP_FILE
+    #define L2_ALBEDO_SUB_MAP_FILE "textures/L2_albedo_sub.png"
+#endif
+#ifndef L2_ALBEDO_SUB_ENABLE
+    #define L2_ALBEDO_SUB_ENABLE 1
+#endif
+#ifndef L2_SMOOTHNESS
+    #define L2_SMOOTHNESS 0.0
+#endif
+#ifndef L2_SMOOTHNESS_MAP_FROM
+    #define L2_SMOOTHNESS_MAP_FROM 0
+#endif
+#ifndef L2_SMOOTHNESS_MAP_FILE
+    #define L2_SMOOTHNESS_MAP_FILE "textures/L2_smoothness.png"
+#endif
+#ifndef L2_SMOOTHNESS_MAP_SWIZZLE
+    #define L2_SMOOTHNESS_MAP_SWIZZLE 0
+#endif
+#ifndef L2_SMOOTHNESS_MAP_TYPE
+    #define L2_SMOOTHNESS_MAP_TYPE 0
+#endif
+#ifndef L2_SMOOTHNESS_MAP_LOOP
+    #define L2_SMOOTHNESS_MAP_LOOP 1.0
+#endif
+#ifndef L2_METALNESS
+    #define L2_METALNESS 0.0
+#endif
+#ifndef L2_METALNESS_MAP_FROM
+    #define L2_METALNESS_MAP_FROM 0
+#endif
+#ifndef L2_METALNESS_MAP_FILE
+    #define L2_METALNESS_MAP_FILE "textures/L2_metalness.png"
+#endif
+#ifndef L2_METALNESS_MAP_SWIZZLE
+    #define L2_METALNESS_MAP_SWIZZLE 0
+#endif
+#ifndef L2_METALNESS_MAP_LOOP
+    #define L2_METALNESS_MAP_LOOP 1.0
+#endif
+#ifndef L2_SPECULAR
+    #define L2_SPECULAR 0.5
+#endif
+#ifndef L2_SPECULAR_MAP_FROM
+    #define L2_SPECULAR_MAP_FROM 0
+#endif
+#ifndef L2_SPECULAR_MAP_FILE
+    #define L2_SPECULAR_MAP_FILE "textures/L2_specular.png"
+#endif
+#ifndef L2_SPECULAR_MAP_SWIZZLE
+    #define L2_SPECULAR_MAP_SWIZZLE 0
+#endif
+#ifndef L2_SPECULAR_MAP_LOOP
+    #define L2_SPECULAR_MAP_LOOP 1.0
+#endif
+#ifndef L2_NORMAL_MAP_FROM
+    #define L2_NORMAL_MAP_FROM 0
+#endif
+#ifndef L2_NORMAL_MAP_FILE
+    #define L2_NORMAL_MAP_FILE "textures/L2_normal.png"
+#endif
+#ifndef L2_NORMAL_MAP_TYPE
+    #define L2_NORMAL_MAP_TYPE 0
+#endif
+#ifndef L2_NORMAL_MAP_SCALE
+    #define L2_NORMAL_MAP_SCALE 1.0
+#endif
+#ifndef L2_NORMAL_MAP_LOOP
+    #define L2_NORMAL_MAP_LOOP 1.0
+#endif
+#ifndef L2_NORMAL_SUB_MAP_FROM
+    #define L2_NORMAL_SUB_MAP_FROM 0
+#endif
+#ifndef L2_NORMAL_SUB_MAP_FILE
+    #define L2_NORMAL_SUB_MAP_FILE "textures/L2_normal_sub.png"
+#endif
+#ifndef L2_NORMAL_SUB_MAP_TYPE
+    #define L2_NORMAL_SUB_MAP_TYPE 0
+#endif
+#ifndef L2_NORMAL_SUB_MAP_SCALE
+    #define L2_NORMAL_SUB_MAP_SCALE 1.0
+#endif
+#ifndef L2_NORMAL_SUB_MAP_LOOP
+    #define L2_NORMAL_SUB_MAP_LOOP 1.0
+#endif
+#ifndef L2_OCCLUSION_MAP_FROM
+    #define L2_OCCLUSION_MAP_FROM 0
+#endif
+#ifndef L2_OCCLUSION_MAP_FILE
+    #define L2_OCCLUSION_MAP_FILE "textures/L2_occlusion.png"
+#endif
+#ifndef L2_OCCLUSION_MAP_SWIZZLE
+    #define L2_OCCLUSION_MAP_SWIZZLE 0
+#endif
+#ifndef L2_OCCLUSION_MAP_LOOP
+    #define L2_OCCLUSION_MAP_LOOP 1.0
+#endif
+#ifndef L2_EMISSIVE
+    #define L2_EMISSIVE float3(0, 0, 0)
+#endif
+#ifndef L2_EMISSIVE_INTENSITY
+    #define L2_EMISSIVE_INTENSITY 0.0
+#endif
+#ifndef L2_EMISSIVE_MAP_FROM
+    #define L2_EMISSIVE_MAP_FROM 0
+#endif
+#ifndef L2_EMISSIVE_MAP_FILE
+    #define L2_EMISSIVE_MAP_FILE "textures/L2_emissive.png"
+#endif
+#ifndef L2_EMISSIVE_MAP_LOOP
+    #define L2_EMISSIVE_MAP_LOOP 1.0
+#endif
+#ifndef L2_SHADING_MODEL
+    #define L2_SHADING_MODEL 0
+#endif
+#ifndef L2_CUSTOM_A
+    #define L2_CUSTOM_A 0.0
+#endif
+#ifndef L2_CUSTOM_B
+    #define L2_CUSTOM_B float3(0, 0, 0)
+#endif
+
+// -------------------- Layer 3 --------------------
+#ifndef L3_ALBEDO
+    #define L3_ALBEDO float3(1, 1, 1)
+#endif
+#ifndef L3_ALBEDO_MAP_FROM
+    #define L3_ALBEDO_MAP_FROM 0
+#endif
+#ifndef L3_ALBEDO_MAP_FILE
+    #define L3_ALBEDO_MAP_FILE "textures/L3_albedo.png"
+#endif
+#ifndef L3_ALBEDO_APPLY_DIFFUSE
+    #define L3_ALBEDO_APPLY_DIFFUSE 1
+#endif
+#ifndef L3_ALBEDO_SUB_MAP_FROM
+    #define L3_ALBEDO_SUB_MAP_FROM 0
+#endif
+#ifndef L3_ALBEDO_SUB_MAP_FILE
+    #define L3_ALBEDO_SUB_MAP_FILE "textures/L3_albedo_sub.png"
+#endif
+#ifndef L3_ALBEDO_SUB_ENABLE
+    #define L3_ALBEDO_SUB_ENABLE 1
+#endif
+#ifndef L3_SMOOTHNESS
+    #define L3_SMOOTHNESS 0.0
+#endif
+#ifndef L3_SMOOTHNESS_MAP_FROM
+    #define L3_SMOOTHNESS_MAP_FROM 0
+#endif
+#ifndef L3_SMOOTHNESS_MAP_FILE
+    #define L3_SMOOTHNESS_MAP_FILE "textures/L3_smoothness.png"
+#endif
+#ifndef L3_SMOOTHNESS_MAP_SWIZZLE
+    #define L3_SMOOTHNESS_MAP_SWIZZLE 0
+#endif
+#ifndef L3_SMOOTHNESS_MAP_TYPE
+    #define L3_SMOOTHNESS_MAP_TYPE 0
+#endif
+#ifndef L3_SMOOTHNESS_MAP_LOOP
+    #define L3_SMOOTHNESS_MAP_LOOP 1.0
+#endif
+#ifndef L3_METALNESS
+    #define L3_METALNESS 0.0
+#endif
+#ifndef L3_METALNESS_MAP_FROM
+    #define L3_METALNESS_MAP_FROM 0
+#endif
+#ifndef L3_METALNESS_MAP_FILE
+    #define L3_METALNESS_MAP_FILE "textures/L3_metalness.png"
+#endif
+#ifndef L3_METALNESS_MAP_SWIZZLE
+    #define L3_METALNESS_MAP_SWIZZLE 0
+#endif
+#ifndef L3_METALNESS_MAP_LOOP
+    #define L3_METALNESS_MAP_LOOP 1.0
+#endif
+#ifndef L3_SPECULAR
+    #define L3_SPECULAR 0.5
+#endif
+#ifndef L3_SPECULAR_MAP_FROM
+    #define L3_SPECULAR_MAP_FROM 0
+#endif
+#ifndef L3_SPECULAR_MAP_FILE
+    #define L3_SPECULAR_MAP_FILE "textures/L3_specular.png"
+#endif
+#ifndef L3_SPECULAR_MAP_SWIZZLE
+    #define L3_SPECULAR_MAP_SWIZZLE 0
+#endif
+#ifndef L3_SPECULAR_MAP_LOOP
+    #define L3_SPECULAR_MAP_LOOP 1.0
+#endif
+#ifndef L3_NORMAL_MAP_FROM
+    #define L3_NORMAL_MAP_FROM 0
+#endif
+#ifndef L3_NORMAL_MAP_FILE
+    #define L3_NORMAL_MAP_FILE "textures/L3_normal.png"
+#endif
+#ifndef L3_NORMAL_MAP_TYPE
+    #define L3_NORMAL_MAP_TYPE 0
+#endif
+#ifndef L3_NORMAL_MAP_SCALE
+    #define L3_NORMAL_MAP_SCALE 1.0
+#endif
+#ifndef L3_NORMAL_MAP_LOOP
+    #define L3_NORMAL_MAP_LOOP 1.0
+#endif
+#ifndef L3_NORMAL_SUB_MAP_FROM
+    #define L3_NORMAL_SUB_MAP_FROM 0
+#endif
+#ifndef L3_NORMAL_SUB_MAP_FILE
+    #define L3_NORMAL_SUB_MAP_FILE "textures/L3_normal_sub.png"
+#endif
+#ifndef L3_NORMAL_SUB_MAP_TYPE
+    #define L3_NORMAL_SUB_MAP_TYPE 0
+#endif
+#ifndef L3_NORMAL_SUB_MAP_SCALE
+    #define L3_NORMAL_SUB_MAP_SCALE 1.0
+#endif
+#ifndef L3_NORMAL_SUB_MAP_LOOP
+    #define L3_NORMAL_SUB_MAP_LOOP 1.0
+#endif
+#ifndef L3_OCCLUSION_MAP_FROM
+    #define L3_OCCLUSION_MAP_FROM 0
+#endif
+#ifndef L3_OCCLUSION_MAP_FILE
+    #define L3_OCCLUSION_MAP_FILE "textures/L3_occlusion.png"
+#endif
+#ifndef L3_OCCLUSION_MAP_SWIZZLE
+    #define L3_OCCLUSION_MAP_SWIZZLE 0
+#endif
+#ifndef L3_OCCLUSION_MAP_LOOP
+    #define L3_OCCLUSION_MAP_LOOP 1.0
+#endif
+#ifndef L3_EMISSIVE
+    #define L3_EMISSIVE float3(0, 0, 0)
+#endif
+#ifndef L3_EMISSIVE_INTENSITY
+    #define L3_EMISSIVE_INTENSITY 0.0
+#endif
+#ifndef L3_EMISSIVE_MAP_FROM
+    #define L3_EMISSIVE_MAP_FROM 0
+#endif
+#ifndef L3_EMISSIVE_MAP_FILE
+    #define L3_EMISSIVE_MAP_FILE "textures/L3_emissive.png"
+#endif
+#ifndef L3_EMISSIVE_MAP_LOOP
+    #define L3_EMISSIVE_MAP_LOOP 1.0
+#endif
+#ifndef L3_SHADING_MODEL
+    #define L3_SHADING_MODEL 0
+#endif
+#ifndef L3_CUSTOM_A
+    #define L3_CUSTOM_A 0.0
+#endif
+#ifndef L3_CUSTOM_B
+    #define L3_CUSTOM_B float3(0, 0, 0)
+#endif
+
+// -------------------- Layer 4 --------------------
+#ifndef L4_ALBEDO
+    #define L4_ALBEDO float3(1, 1, 1)
+#endif
+#ifndef L4_ALBEDO_MAP_FROM
+    #define L4_ALBEDO_MAP_FROM 0
+#endif
+#ifndef L4_ALBEDO_MAP_FILE
+    #define L4_ALBEDO_MAP_FILE "textures/L4_albedo.png"
+#endif
+#ifndef L4_ALBEDO_APPLY_DIFFUSE
+    #define L4_ALBEDO_APPLY_DIFFUSE 1
+#endif
+#ifndef L4_ALBEDO_SUB_MAP_FROM
+    #define L4_ALBEDO_SUB_MAP_FROM 0
+#endif
+#ifndef L4_ALBEDO_SUB_MAP_FILE
+    #define L4_ALBEDO_SUB_MAP_FILE "textures/L4_albedo_sub.png"
+#endif
+#ifndef L4_ALBEDO_SUB_ENABLE
+    #define L4_ALBEDO_SUB_ENABLE 1
+#endif
+#ifndef L4_SMOOTHNESS
+    #define L4_SMOOTHNESS 0.0
+#endif
+#ifndef L4_SMOOTHNESS_MAP_FROM
+    #define L4_SMOOTHNESS_MAP_FROM 0
+#endif
+#ifndef L4_SMOOTHNESS_MAP_FILE
+    #define L4_SMOOTHNESS_MAP_FILE "textures/L4_smoothness.png"
+#endif
+#ifndef L4_SMOOTHNESS_MAP_SWIZZLE
+    #define L4_SMOOTHNESS_MAP_SWIZZLE 0
+#endif
+#ifndef L4_SMOOTHNESS_MAP_TYPE
+    #define L4_SMOOTHNESS_MAP_TYPE 0
+#endif
+#ifndef L4_SMOOTHNESS_MAP_LOOP
+    #define L4_SMOOTHNESS_MAP_LOOP 1.0
+#endif
+#ifndef L4_METALNESS
+    #define L4_METALNESS 0.0
+#endif
+#ifndef L4_METALNESS_MAP_FROM
+    #define L4_METALNESS_MAP_FROM 0
+#endif
+#ifndef L4_METALNESS_MAP_FILE
+    #define L4_METALNESS_MAP_FILE "textures/L4_metalness.png"
+#endif
+#ifndef L4_METALNESS_MAP_SWIZZLE
+    #define L4_METALNESS_MAP_SWIZZLE 0
+#endif
+#ifndef L4_METALNESS_MAP_LOOP
+    #define L4_METALNESS_MAP_LOOP 1.0
+#endif
+#ifndef L4_SPECULAR
+    #define L4_SPECULAR 0.5
+#endif
+#ifndef L4_SPECULAR_MAP_FROM
+    #define L4_SPECULAR_MAP_FROM 0
+#endif
+#ifndef L4_SPECULAR_MAP_FILE
+    #define L4_SPECULAR_MAP_FILE "textures/L4_specular.png"
+#endif
+#ifndef L4_SPECULAR_MAP_SWIZZLE
+    #define L4_SPECULAR_MAP_SWIZZLE 0
+#endif
+#ifndef L4_SPECULAR_MAP_LOOP
+    #define L4_SPECULAR_MAP_LOOP 1.0
+#endif
+#ifndef L4_NORMAL_MAP_FROM
+    #define L4_NORMAL_MAP_FROM 0
+#endif
+#ifndef L4_NORMAL_MAP_FILE
+    #define L4_NORMAL_MAP_FILE "textures/L4_normal.png"
+#endif
+#ifndef L4_NORMAL_MAP_TYPE
+    #define L4_NORMAL_MAP_TYPE 0
+#endif
+#ifndef L4_NORMAL_MAP_SCALE
+    #define L4_NORMAL_MAP_SCALE 1.0
+#endif
+#ifndef L4_NORMAL_MAP_LOOP
+    #define L4_NORMAL_MAP_LOOP 1.0
+#endif
+#ifndef L4_NORMAL_SUB_MAP_FROM
+    #define L4_NORMAL_SUB_MAP_FROM 0
+#endif
+#ifndef L4_NORMAL_SUB_MAP_FILE
+    #define L4_NORMAL_SUB_MAP_FILE "textures/L4_normal_sub.png"
+#endif
+#ifndef L4_NORMAL_SUB_MAP_TYPE
+    #define L4_NORMAL_SUB_MAP_TYPE 0
+#endif
+#ifndef L4_NORMAL_SUB_MAP_SCALE
+    #define L4_NORMAL_SUB_MAP_SCALE 1.0
+#endif
+#ifndef L4_NORMAL_SUB_MAP_LOOP
+    #define L4_NORMAL_SUB_MAP_LOOP 1.0
+#endif
+#ifndef L4_OCCLUSION_MAP_FROM
+    #define L4_OCCLUSION_MAP_FROM 0
+#endif
+#ifndef L4_OCCLUSION_MAP_FILE
+    #define L4_OCCLUSION_MAP_FILE "textures/L4_occlusion.png"
+#endif
+#ifndef L4_OCCLUSION_MAP_SWIZZLE
+    #define L4_OCCLUSION_MAP_SWIZZLE 0
+#endif
+#ifndef L4_OCCLUSION_MAP_LOOP
+    #define L4_OCCLUSION_MAP_LOOP 1.0
+#endif
+#ifndef L4_EMISSIVE
+    #define L4_EMISSIVE float3(0, 0, 0)
+#endif
+#ifndef L4_EMISSIVE_INTENSITY
+    #define L4_EMISSIVE_INTENSITY 0.0
+#endif
+#ifndef L4_EMISSIVE_MAP_FROM
+    #define L4_EMISSIVE_MAP_FROM 0
+#endif
+#ifndef L4_EMISSIVE_MAP_FILE
+    #define L4_EMISSIVE_MAP_FILE "textures/L4_emissive.png"
+#endif
+#ifndef L4_EMISSIVE_MAP_LOOP
+    #define L4_EMISSIVE_MAP_LOOP 1.0
+#endif
+#ifndef L4_SHADING_MODEL
+    #define L4_SHADING_MODEL 0
+#endif
+#ifndef L4_CUSTOM_A
+    #define L4_CUSTOM_A 0.0
+#endif
+#ifndef L4_CUSTOM_B
+    #define L4_CUSTOM_B float3(0, 0, 0)
+#endif
+
+// -------------------- Layer 5 --------------------
+#ifndef L5_ALBEDO
+    #define L5_ALBEDO float3(1, 1, 1)
+#endif
+#ifndef L5_ALBEDO_MAP_FROM
+    #define L5_ALBEDO_MAP_FROM 0
+#endif
+#ifndef L5_ALBEDO_MAP_FILE
+    #define L5_ALBEDO_MAP_FILE "textures/L5_albedo.png"
+#endif
+#ifndef L5_ALBEDO_APPLY_DIFFUSE
+    #define L5_ALBEDO_APPLY_DIFFUSE 1
+#endif
+#ifndef L5_ALBEDO_SUB_MAP_FROM
+    #define L5_ALBEDO_SUB_MAP_FROM 0
+#endif
+#ifndef L5_ALBEDO_SUB_MAP_FILE
+    #define L5_ALBEDO_SUB_MAP_FILE "textures/L5_albedo_sub.png"
+#endif
+#ifndef L5_ALBEDO_SUB_ENABLE
+    #define L5_ALBEDO_SUB_ENABLE 1
+#endif
+#ifndef L5_SMOOTHNESS
+    #define L5_SMOOTHNESS 0.0
+#endif
+#ifndef L5_SMOOTHNESS_MAP_FROM
+    #define L5_SMOOTHNESS_MAP_FROM 0
+#endif
+#ifndef L5_SMOOTHNESS_MAP_FILE
+    #define L5_SMOOTHNESS_MAP_FILE "textures/L5_smoothness.png"
+#endif
+#ifndef L5_SMOOTHNESS_MAP_SWIZZLE
+    #define L5_SMOOTHNESS_MAP_SWIZZLE 0
+#endif
+#ifndef L5_SMOOTHNESS_MAP_TYPE
+    #define L5_SMOOTHNESS_MAP_TYPE 0
+#endif
+#ifndef L5_SMOOTHNESS_MAP_LOOP
+    #define L5_SMOOTHNESS_MAP_LOOP 1.0
+#endif
+#ifndef L5_METALNESS
+    #define L5_METALNESS 0.0
+#endif
+#ifndef L5_METALNESS_MAP_FROM
+    #define L5_METALNESS_MAP_FROM 0
+#endif
+#ifndef L5_METALNESS_MAP_FILE
+    #define L5_METALNESS_MAP_FILE "textures/L5_metalness.png"
+#endif
+#ifndef L5_METALNESS_MAP_SWIZZLE
+    #define L5_METALNESS_MAP_SWIZZLE 0
+#endif
+#ifndef L5_METALNESS_MAP_LOOP
+    #define L5_METALNESS_MAP_LOOP 1.0
+#endif
+#ifndef L5_SPECULAR
+    #define L5_SPECULAR 0.5
+#endif
+#ifndef L5_SPECULAR_MAP_FROM
+    #define L5_SPECULAR_MAP_FROM 0
+#endif
+#ifndef L5_SPECULAR_MAP_FILE
+    #define L5_SPECULAR_MAP_FILE "textures/L5_specular.png"
+#endif
+#ifndef L5_SPECULAR_MAP_SWIZZLE
+    #define L5_SPECULAR_MAP_SWIZZLE 0
+#endif
+#ifndef L5_SPECULAR_MAP_LOOP
+    #define L5_SPECULAR_MAP_LOOP 1.0
+#endif
+#ifndef L5_NORMAL_MAP_FROM
+    #define L5_NORMAL_MAP_FROM 0
+#endif
+#ifndef L5_NORMAL_MAP_FILE
+    #define L5_NORMAL_MAP_FILE "textures/L5_normal.png"
+#endif
+#ifndef L5_NORMAL_MAP_TYPE
+    #define L5_NORMAL_MAP_TYPE 0
+#endif
+#ifndef L5_NORMAL_MAP_SCALE
+    #define L5_NORMAL_MAP_SCALE 1.0
+#endif
+#ifndef L5_NORMAL_MAP_LOOP
+    #define L5_NORMAL_MAP_LOOP 1.0
+#endif
+#ifndef L5_NORMAL_SUB_MAP_FROM
+    #define L5_NORMAL_SUB_MAP_FROM 0
+#endif
+#ifndef L5_NORMAL_SUB_MAP_FILE
+    #define L5_NORMAL_SUB_MAP_FILE "textures/L5_normal_sub.png"
+#endif
+#ifndef L5_NORMAL_SUB_MAP_TYPE
+    #define L5_NORMAL_SUB_MAP_TYPE 0
+#endif
+#ifndef L5_NORMAL_SUB_MAP_SCALE
+    #define L5_NORMAL_SUB_MAP_SCALE 1.0
+#endif
+#ifndef L5_NORMAL_SUB_MAP_LOOP
+    #define L5_NORMAL_SUB_MAP_LOOP 1.0
+#endif
+#ifndef L5_OCCLUSION_MAP_FROM
+    #define L5_OCCLUSION_MAP_FROM 0
+#endif
+#ifndef L5_OCCLUSION_MAP_FILE
+    #define L5_OCCLUSION_MAP_FILE "textures/L5_occlusion.png"
+#endif
+#ifndef L5_OCCLUSION_MAP_SWIZZLE
+    #define L5_OCCLUSION_MAP_SWIZZLE 0
+#endif
+#ifndef L5_OCCLUSION_MAP_LOOP
+    #define L5_OCCLUSION_MAP_LOOP 1.0
+#endif
+#ifndef L5_EMISSIVE
+    #define L5_EMISSIVE float3(0, 0, 0)
+#endif
+#ifndef L5_EMISSIVE_INTENSITY
+    #define L5_EMISSIVE_INTENSITY 0.0
+#endif
+#ifndef L5_EMISSIVE_MAP_FROM
+    #define L5_EMISSIVE_MAP_FROM 0
+#endif
+#ifndef L5_EMISSIVE_MAP_FILE
+    #define L5_EMISSIVE_MAP_FILE "textures/L5_emissive.png"
+#endif
+#ifndef L5_EMISSIVE_MAP_LOOP
+    #define L5_EMISSIVE_MAP_LOOP 1.0
+#endif
+#ifndef L5_SHADING_MODEL
+    #define L5_SHADING_MODEL 0
+#endif
+#ifndef L5_CUSTOM_A
+    #define L5_CUSTOM_A 0.0
+#endif
+#ifndef L5_CUSTOM_B
+    #define L5_CUSTOM_B float3(0, 0, 0)
+#endif
+
+// -------------------- Layer 6 --------------------
+#ifndef L6_ALBEDO
+    #define L6_ALBEDO float3(1, 1, 1)
+#endif
+#ifndef L6_ALBEDO_MAP_FROM
+    #define L6_ALBEDO_MAP_FROM 0
+#endif
+#ifndef L6_ALBEDO_MAP_FILE
+    #define L6_ALBEDO_MAP_FILE "textures/L6_albedo.png"
+#endif
+#ifndef L6_ALBEDO_APPLY_DIFFUSE
+    #define L6_ALBEDO_APPLY_DIFFUSE 1
+#endif
+#ifndef L6_ALBEDO_SUB_MAP_FROM
+    #define L6_ALBEDO_SUB_MAP_FROM 0
+#endif
+#ifndef L6_ALBEDO_SUB_MAP_FILE
+    #define L6_ALBEDO_SUB_MAP_FILE "textures/L6_albedo_sub.png"
+#endif
+#ifndef L6_ALBEDO_SUB_ENABLE
+    #define L6_ALBEDO_SUB_ENABLE 1
+#endif
+#ifndef L6_SMOOTHNESS
+    #define L6_SMOOTHNESS 0.0
+#endif
+#ifndef L6_SMOOTHNESS_MAP_FROM
+    #define L6_SMOOTHNESS_MAP_FROM 0
+#endif
+#ifndef L6_SMOOTHNESS_MAP_FILE
+    #define L6_SMOOTHNESS_MAP_FILE "textures/L6_smoothness.png"
+#endif
+#ifndef L6_SMOOTHNESS_MAP_SWIZZLE
+    #define L6_SMOOTHNESS_MAP_SWIZZLE 0
+#endif
+#ifndef L6_SMOOTHNESS_MAP_TYPE
+    #define L6_SMOOTHNESS_MAP_TYPE 0
+#endif
+#ifndef L6_SMOOTHNESS_MAP_LOOP
+    #define L6_SMOOTHNESS_MAP_LOOP 1.0
+#endif
+#ifndef L6_METALNESS
+    #define L6_METALNESS 0.0
+#endif
+#ifndef L6_METALNESS_MAP_FROM
+    #define L6_METALNESS_MAP_FROM 0
+#endif
+#ifndef L6_METALNESS_MAP_FILE
+    #define L6_METALNESS_MAP_FILE "textures/L6_metalness.png"
+#endif
+#ifndef L6_METALNESS_MAP_SWIZZLE
+    #define L6_METALNESS_MAP_SWIZZLE 0
+#endif
+#ifndef L6_METALNESS_MAP_LOOP
+    #define L6_METALNESS_MAP_LOOP 1.0
+#endif
+#ifndef L6_SPECULAR
+    #define L6_SPECULAR 0.5
+#endif
+#ifndef L6_SPECULAR_MAP_FROM
+    #define L6_SPECULAR_MAP_FROM 0
+#endif
+#ifndef L6_SPECULAR_MAP_FILE
+    #define L6_SPECULAR_MAP_FILE "textures/L6_specular.png"
+#endif
+#ifndef L6_SPECULAR_MAP_SWIZZLE
+    #define L6_SPECULAR_MAP_SWIZZLE 0
+#endif
+#ifndef L6_SPECULAR_MAP_LOOP
+    #define L6_SPECULAR_MAP_LOOP 1.0
+#endif
+#ifndef L6_NORMAL_MAP_FROM
+    #define L6_NORMAL_MAP_FROM 0
+#endif
+#ifndef L6_NORMAL_MAP_FILE
+    #define L6_NORMAL_MAP_FILE "textures/L6_normal.png"
+#endif
+#ifndef L6_NORMAL_MAP_TYPE
+    #define L6_NORMAL_MAP_TYPE 0
+#endif
+#ifndef L6_NORMAL_MAP_SCALE
+    #define L6_NORMAL_MAP_SCALE 1.0
+#endif
+#ifndef L6_NORMAL_MAP_LOOP
+    #define L6_NORMAL_MAP_LOOP 1.0
+#endif
+#ifndef L6_NORMAL_SUB_MAP_FROM
+    #define L6_NORMAL_SUB_MAP_FROM 0
+#endif
+#ifndef L6_NORMAL_SUB_MAP_FILE
+    #define L6_NORMAL_SUB_MAP_FILE "textures/L6_normal_sub.png"
+#endif
+#ifndef L6_NORMAL_SUB_MAP_TYPE
+    #define L6_NORMAL_SUB_MAP_TYPE 0
+#endif
+#ifndef L6_NORMAL_SUB_MAP_SCALE
+    #define L6_NORMAL_SUB_MAP_SCALE 1.0
+#endif
+#ifndef L6_NORMAL_SUB_MAP_LOOP
+    #define L6_NORMAL_SUB_MAP_LOOP 1.0
+#endif
+#ifndef L6_OCCLUSION_MAP_FROM
+    #define L6_OCCLUSION_MAP_FROM 0
+#endif
+#ifndef L6_OCCLUSION_MAP_FILE
+    #define L6_OCCLUSION_MAP_FILE "textures/L6_occlusion.png"
+#endif
+#ifndef L6_OCCLUSION_MAP_SWIZZLE
+    #define L6_OCCLUSION_MAP_SWIZZLE 0
+#endif
+#ifndef L6_OCCLUSION_MAP_LOOP
+    #define L6_OCCLUSION_MAP_LOOP 1.0
+#endif
+#ifndef L6_EMISSIVE
+    #define L6_EMISSIVE float3(0, 0, 0)
+#endif
+#ifndef L6_EMISSIVE_INTENSITY
+    #define L6_EMISSIVE_INTENSITY 0.0
+#endif
+#ifndef L6_EMISSIVE_MAP_FROM
+    #define L6_EMISSIVE_MAP_FROM 0
+#endif
+#ifndef L6_EMISSIVE_MAP_FILE
+    #define L6_EMISSIVE_MAP_FILE "textures/L6_emissive.png"
+#endif
+#ifndef L6_EMISSIVE_MAP_LOOP
+    #define L6_EMISSIVE_MAP_LOOP 1.0
+#endif
+#ifndef L6_SHADING_MODEL
+    #define L6_SHADING_MODEL 0
+#endif
+#ifndef L6_CUSTOM_A
+    #define L6_CUSTOM_A 0.0
+#endif
+#ifndef L6_CUSTOM_B
+    #define L6_CUSTOM_B float3(0, 0, 0)
+#endif
+
+// -------------------- Layer 7 --------------------
+#ifndef L7_ALBEDO
+    #define L7_ALBEDO float3(1, 1, 1)
+#endif
+#ifndef L7_ALBEDO_MAP_FROM
+    #define L7_ALBEDO_MAP_FROM 0
+#endif
+#ifndef L7_ALBEDO_MAP_FILE
+    #define L7_ALBEDO_MAP_FILE "textures/L7_albedo.png"
+#endif
+#ifndef L7_ALBEDO_APPLY_DIFFUSE
+    #define L7_ALBEDO_APPLY_DIFFUSE 1
+#endif
+#ifndef L7_ALBEDO_SUB_MAP_FROM
+    #define L7_ALBEDO_SUB_MAP_FROM 0
+#endif
+#ifndef L7_ALBEDO_SUB_MAP_FILE
+    #define L7_ALBEDO_SUB_MAP_FILE "textures/L7_albedo_sub.png"
+#endif
+#ifndef L7_ALBEDO_SUB_ENABLE
+    #define L7_ALBEDO_SUB_ENABLE 1
+#endif
+#ifndef L7_SMOOTHNESS
+    #define L7_SMOOTHNESS 0.0
+#endif
+#ifndef L7_SMOOTHNESS_MAP_FROM
+    #define L7_SMOOTHNESS_MAP_FROM 0
+#endif
+#ifndef L7_SMOOTHNESS_MAP_FILE
+    #define L7_SMOOTHNESS_MAP_FILE "textures/L7_smoothness.png"
+#endif
+#ifndef L7_SMOOTHNESS_MAP_SWIZZLE
+    #define L7_SMOOTHNESS_MAP_SWIZZLE 0
+#endif
+#ifndef L7_SMOOTHNESS_MAP_TYPE
+    #define L7_SMOOTHNESS_MAP_TYPE 0
+#endif
+#ifndef L7_SMOOTHNESS_MAP_LOOP
+    #define L7_SMOOTHNESS_MAP_LOOP 1.0
+#endif
+#ifndef L7_METALNESS
+    #define L7_METALNESS 0.0
+#endif
+#ifndef L7_METALNESS_MAP_FROM
+    #define L7_METALNESS_MAP_FROM 0
+#endif
+#ifndef L7_METALNESS_MAP_FILE
+    #define L7_METALNESS_MAP_FILE "textures/L7_metalness.png"
+#endif
+#ifndef L7_METALNESS_MAP_SWIZZLE
+    #define L7_METALNESS_MAP_SWIZZLE 0
+#endif
+#ifndef L7_METALNESS_MAP_LOOP
+    #define L7_METALNESS_MAP_LOOP 1.0
+#endif
+#ifndef L7_SPECULAR
+    #define L7_SPECULAR 0.5
+#endif
+#ifndef L7_SPECULAR_MAP_FROM
+    #define L7_SPECULAR_MAP_FROM 0
+#endif
+#ifndef L7_SPECULAR_MAP_FILE
+    #define L7_SPECULAR_MAP_FILE "textures/L7_specular.png"
+#endif
+#ifndef L7_SPECULAR_MAP_SWIZZLE
+    #define L7_SPECULAR_MAP_SWIZZLE 0
+#endif
+#ifndef L7_SPECULAR_MAP_LOOP
+    #define L7_SPECULAR_MAP_LOOP 1.0
+#endif
+#ifndef L7_NORMAL_MAP_FROM
+    #define L7_NORMAL_MAP_FROM 0
+#endif
+#ifndef L7_NORMAL_MAP_FILE
+    #define L7_NORMAL_MAP_FILE "textures/L7_normal.png"
+#endif
+#ifndef L7_NORMAL_MAP_TYPE
+    #define L7_NORMAL_MAP_TYPE 0
+#endif
+#ifndef L7_NORMAL_MAP_SCALE
+    #define L7_NORMAL_MAP_SCALE 1.0
+#endif
+#ifndef L7_NORMAL_MAP_LOOP
+    #define L7_NORMAL_MAP_LOOP 1.0
+#endif
+#ifndef L7_NORMAL_SUB_MAP_FROM
+    #define L7_NORMAL_SUB_MAP_FROM 0
+#endif
+#ifndef L7_NORMAL_SUB_MAP_FILE
+    #define L7_NORMAL_SUB_MAP_FILE "textures/L7_normal_sub.png"
+#endif
+#ifndef L7_NORMAL_SUB_MAP_TYPE
+    #define L7_NORMAL_SUB_MAP_TYPE 0
+#endif
+#ifndef L7_NORMAL_SUB_MAP_SCALE
+    #define L7_NORMAL_SUB_MAP_SCALE 1.0
+#endif
+#ifndef L7_NORMAL_SUB_MAP_LOOP
+    #define L7_NORMAL_SUB_MAP_LOOP 1.0
+#endif
+#ifndef L7_OCCLUSION_MAP_FROM
+    #define L7_OCCLUSION_MAP_FROM 0
+#endif
+#ifndef L7_OCCLUSION_MAP_FILE
+    #define L7_OCCLUSION_MAP_FILE "textures/L7_occlusion.png"
+#endif
+#ifndef L7_OCCLUSION_MAP_SWIZZLE
+    #define L7_OCCLUSION_MAP_SWIZZLE 0
+#endif
+#ifndef L7_OCCLUSION_MAP_LOOP
+    #define L7_OCCLUSION_MAP_LOOP 1.0
+#endif
+#ifndef L7_EMISSIVE
+    #define L7_EMISSIVE float3(0, 0, 0)
+#endif
+#ifndef L7_EMISSIVE_INTENSITY
+    #define L7_EMISSIVE_INTENSITY 0.0
+#endif
+#ifndef L7_EMISSIVE_MAP_FROM
+    #define L7_EMISSIVE_MAP_FROM 0
+#endif
+#ifndef L7_EMISSIVE_MAP_FILE
+    #define L7_EMISSIVE_MAP_FILE "textures/L7_emissive.png"
+#endif
+#ifndef L7_EMISSIVE_MAP_LOOP
+    #define L7_EMISSIVE_MAP_LOOP 1.0
+#endif
+#ifndef L7_SHADING_MODEL
+    #define L7_SHADING_MODEL 0
+#endif
+#ifndef L7_CUSTOM_A
+    #define L7_CUSTOM_A 0.0
+#endif
+#ifndef L7_CUSTOM_B
+    #define L7_CUSTOM_B float3(0, 0, 0)
+#endif
+// ==================== Common Settings Defaults ====================
+
+#ifndef ALPHA_MAP_FROM
+    #define ALPHA_MAP_FROM 3
+#endif
+#ifndef ALPHA_MAP_SWIZZLE
+    #define ALPHA_MAP_SWIZZLE 3
+#endif
+// Mask packing mode: 0 = individual grayscale, 1 = RGB packed (2 textures)
+#ifndef MASK_PACKING
+    #define MASK_PACKING 0
+#endif
+
+#if MASK_PACKING == 0
+    // --- Individual mask files (1 grayscale per layer) ---
+    #ifndef MASK_1_FILE
+        #define MASK_1_FILE "masks/mask_1.png"
+    #endif
+    #ifndef MASK_2_FILE
+        #define MASK_2_FILE "masks/mask_2.png"
+    #endif
+    #ifndef MASK_3_FILE
+        #define MASK_3_FILE "masks/mask_3.png"
+    #endif
+    #ifndef MASK_4_FILE
+        #define MASK_4_FILE "masks/mask_4.png"
+    #endif
+    #ifndef MASK_5_FILE
+        #define MASK_5_FILE "masks/mask_5.png"
+    #endif
+    #ifndef MASK_6_FILE
+        #define MASK_6_FILE "masks/mask_6.png"
+    #endif
+    #ifndef MASK_7_FILE
+        #define MASK_7_FILE "masks/mask_7.png"
+    #endif
+#else
+    // --- RGBA packed mask files ---
+    // Tex A: R=mask1, G=mask2, B=mask3, A=mask4
+    // Tex B: R=mask5, G=mask6, B=mask7, A=(unused)
+    #ifndef MASK_PACKED_A_FILE
+        #define MASK_PACKED_A_FILE "masks/mask_packed_a.png"
+    #endif
+    #ifndef MASK_PACKED_B_FILE
+        #define MASK_PACKED_B_FILE "masks/mask_packed_b.png"
+    #endif
+#endif
+
+// ==================== Uniform Declarations ====================
+
+float4x4 matWorldView     : WORLDVIEW;
+float4x4 matWorldViewProject : WORLDVIEWPROJECTION;
+
+float4 MaterialDiffuse  : DIFFUSE  <string Object = "Geometry";>;
+float4 MaterialAmbient  : EMISSIVE <string Object = "Geometry";>;
+float4 MaterialSpecular : SPECULAR <string Object = "Geometry";>;
+float  MaterialPower    : SPECULARPOWER <string Object = "Geometry";>;
+
+bool use_texture;
+bool use_subtexture;
+bool use_spheremap;
+bool use_toon;
+
+// ==================== G-Buffer Shared Render Targets ====================
+
+shared texture Gbuffer2RT : RENDERCOLORTARGET;
+shared texture Gbuffer3RT : RENDERCOLORTARGET;
+shared texture Gbuffer4RT : RENDERCOLORTARGET;
+shared texture Gbuffer5RT : RENDERCOLORTARGET;
+shared texture Gbuffer6RT : RENDERCOLORTARGET;
+shared texture Gbuffer7RT : RENDERCOLORTARGET;
+shared texture Gbuffer8RT : RENDERCOLORTARGET;
+
+// ==================== Model Texture ====================
+
+texture DiffuseMap : MATERIALTEXTURE;
+sampler DiffuseMapSamp = sampler_state
+{
+    texture = <DiffuseMap>;
+    MINFILTER = LINEAR; MAGFILTER = LINEAR; MIPFILTER = LINEAR;
+    ADDRESSU = WRAP; ADDRESSV = WRAP;
+};
+
+// ==================== Mask Textures ====================
+
+#if MASK_PACKING == 0
+    // --- Individual grayscale masks ---
+    #if LAYER_COUNT > 1
+    texture MaskTex1<string ResourceName = MASK_1_FILE;>;
+    sampler MaskSamp1 = sampler_state {
+        texture = <MaskTex1>;
+        MINFILTER = LINEAR; MAGFILTER = LINEAR; MIPFILTER = NONE;
+        ADDRESSU = CLAMP; ADDRESSV = CLAMP;
+    };
+    #endif
+
+    #if LAYER_COUNT > 2
+    texture MaskTex2<string ResourceName = MASK_2_FILE;>;
+    sampler MaskSamp2 = sampler_state {
+        texture = <MaskTex2>;
+        MINFILTER = LINEAR; MAGFILTER = LINEAR; MIPFILTER = NONE;
+        ADDRESSU = CLAMP; ADDRESSV = CLAMP;
+    };
+    #endif
+
+    #if LAYER_COUNT > 3
+    texture MaskTex3<string ResourceName = MASK_3_FILE;>;
+    sampler MaskSamp3 = sampler_state {
+        texture = <MaskTex3>;
+        MINFILTER = LINEAR; MAGFILTER = LINEAR; MIPFILTER = NONE;
+        ADDRESSU = CLAMP; ADDRESSV = CLAMP;
+    };
+    #endif
+
+    #if LAYER_COUNT > 4
+    texture MaskTex4<string ResourceName = MASK_4_FILE;>;
+    sampler MaskSamp4 = sampler_state {
+        texture = <MaskTex4>;
+        MINFILTER = LINEAR; MAGFILTER = LINEAR; MIPFILTER = NONE;
+        ADDRESSU = CLAMP; ADDRESSV = CLAMP;
+    };
+    #endif
+
+    #if LAYER_COUNT > 5
+    texture MaskTex5<string ResourceName = MASK_5_FILE;>;
+    sampler MaskSamp5 = sampler_state {
+        texture = <MaskTex5>;
+        MINFILTER = LINEAR; MAGFILTER = LINEAR; MIPFILTER = NONE;
+        ADDRESSU = CLAMP; ADDRESSV = CLAMP;
+    };
+    #endif
+
+    #if LAYER_COUNT > 6
+    texture MaskTex6<string ResourceName = MASK_6_FILE;>;
+    sampler MaskSamp6 = sampler_state {
+        texture = <MaskTex6>;
+        MINFILTER = LINEAR; MAGFILTER = LINEAR; MIPFILTER = NONE;
+        ADDRESSU = CLAMP; ADDRESSV = CLAMP;
+    };
+    #endif
+
+    #if LAYER_COUNT > 7
+    texture MaskTex7<string ResourceName = MASK_7_FILE;>;
+    sampler MaskSamp7 = sampler_state {
+        texture = <MaskTex7>;
+        MINFILTER = LINEAR; MAGFILTER = LINEAR; MIPFILTER = NONE;
+        ADDRESSU = CLAMP; ADDRESSV = CLAMP;
+    };
+    #endif
+
+#else
+    // --- RGBA packed masks ---
+    // Tex A (R=mask1, G=mask2, B=mask3, A=mask4) — needed when LAYER_COUNT > 1
+    #if LAYER_COUNT > 1
+    texture MaskPackedTexA<string ResourceName = MASK_PACKED_A_FILE;>;
+    sampler MaskPackedSampA = sampler_state {
+        texture = <MaskPackedTexA>;
+        MINFILTER = LINEAR; MAGFILTER = LINEAR; MIPFILTER = NONE;
+        ADDRESSU = CLAMP; ADDRESSV = CLAMP;
+    };
+    #endif
+
+    // Tex B (R=mask5, G=mask6, B=mask7) — needed when LAYER_COUNT > 5
+    #if LAYER_COUNT > 5
+    texture MaskPackedTexB<string ResourceName = MASK_PACKED_B_FILE;>;
+    sampler MaskPackedSampB = sampler_state {
+        texture = <MaskPackedTexB>;
+        MINFILTER = LINEAR; MAGFILTER = LINEAR; MIPFILTER = NONE;
+        ADDRESSU = CLAMP; ADDRESSV = CLAMP;
+    };
+    #endif
+#endif
+
+// ==================== Per-Layer Textures ====================
+// Declare texture + sampler only when _MAP_FROM == 1
+// Sampler config: WRAP + LINEAR (standard for texture maps)
+
+#define DECLARE_LAYER_TEX(name, file) \
+    texture name<string ResourceName = file;>; \
+    sampler name##Samp = sampler_state { \
+        texture = <name>; \
+        MINFILTER = LINEAR; MAGFILTER = LINEAR; MIPFILTER = LINEAR; \
+        ADDRESSU = WRAP; ADDRESSV = WRAP; \
+    };
+
+// --- Layer 0 Textures ---
+#if L0_ALBEDO_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L0_AlbedoTex, L0_ALBEDO_MAP_FILE)
+#endif
+#if L0_ALBEDO_SUB_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L0_AlbedoSubTex, L0_ALBEDO_SUB_MAP_FILE)
+#endif
+#if L0_NORMAL_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L0_NormalTex, L0_NORMAL_MAP_FILE)
+#endif
+#if L0_NORMAL_SUB_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L0_NormalSubTex, L0_NORMAL_SUB_MAP_FILE)
+#endif
+#if L0_SMOOTHNESS_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L0_SmoothTex, L0_SMOOTHNESS_MAP_FILE)
+#endif
+#if L0_METALNESS_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L0_MetalTex, L0_METALNESS_MAP_FILE)
+#endif
+#if L0_SPECULAR_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L0_SpecTex, L0_SPECULAR_MAP_FILE)
+#endif
+#if L0_OCCLUSION_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L0_OccTex, L0_OCCLUSION_MAP_FILE)
+#endif
+#if L0_EMISSIVE_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L0_EmissiveTex, L0_EMISSIVE_MAP_FILE)
+#endif
+
+// --- Layer 1 Textures ---
+#if L1_ALBEDO_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L1_AlbedoTex, L1_ALBEDO_MAP_FILE)
+#endif
+#if L1_ALBEDO_SUB_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L1_AlbedoSubTex, L1_ALBEDO_SUB_MAP_FILE)
+#endif
+#if L1_NORMAL_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L1_NormalTex, L1_NORMAL_MAP_FILE)
+#endif
+#if L1_NORMAL_SUB_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L1_NormalSubTex, L1_NORMAL_SUB_MAP_FILE)
+#endif
+#if L1_SMOOTHNESS_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L1_SmoothTex, L1_SMOOTHNESS_MAP_FILE)
+#endif
+#if L1_METALNESS_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L1_MetalTex, L1_METALNESS_MAP_FILE)
+#endif
+#if L1_SPECULAR_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L1_SpecTex, L1_SPECULAR_MAP_FILE)
+#endif
+#if L1_OCCLUSION_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L1_OccTex, L1_OCCLUSION_MAP_FILE)
+#endif
+#if L1_EMISSIVE_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L1_EmissiveTex, L1_EMISSIVE_MAP_FILE)
+#endif
+
+// --- Layer 2 Textures ---
+#if LAYER_COUNT > 2
+#if L2_ALBEDO_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L2_AlbedoTex, L2_ALBEDO_MAP_FILE)
+#endif
+#if L2_ALBEDO_SUB_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L2_AlbedoSubTex, L2_ALBEDO_SUB_MAP_FILE)
+#endif
+#if L2_NORMAL_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L2_NormalTex, L2_NORMAL_MAP_FILE)
+#endif
+#if L2_NORMAL_SUB_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L2_NormalSubTex, L2_NORMAL_SUB_MAP_FILE)
+#endif
+#if L2_SMOOTHNESS_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L2_SmoothTex, L2_SMOOTHNESS_MAP_FILE)
+#endif
+#if L2_METALNESS_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L2_MetalTex, L2_METALNESS_MAP_FILE)
+#endif
+#if L2_SPECULAR_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L2_SpecTex, L2_SPECULAR_MAP_FILE)
+#endif
+#if L2_OCCLUSION_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L2_OccTex, L2_OCCLUSION_MAP_FILE)
+#endif
+#if L2_EMISSIVE_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L2_EmissiveTex, L2_EMISSIVE_MAP_FILE)
+#endif
+#endif // LAYER_COUNT > 2
+
+// --- Layer 3 Textures ---
+#if LAYER_COUNT > 3
+#if L3_ALBEDO_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L3_AlbedoTex, L3_ALBEDO_MAP_FILE)
+#endif
+#if L3_ALBEDO_SUB_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L3_AlbedoSubTex, L3_ALBEDO_SUB_MAP_FILE)
+#endif
+#if L3_NORMAL_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L3_NormalTex, L3_NORMAL_MAP_FILE)
+#endif
+#if L3_NORMAL_SUB_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L3_NormalSubTex, L3_NORMAL_SUB_MAP_FILE)
+#endif
+#if L3_SMOOTHNESS_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L3_SmoothTex, L3_SMOOTHNESS_MAP_FILE)
+#endif
+#if L3_METALNESS_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L3_MetalTex, L3_METALNESS_MAP_FILE)
+#endif
+#if L3_SPECULAR_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L3_SpecTex, L3_SPECULAR_MAP_FILE)
+#endif
+#if L3_OCCLUSION_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L3_OccTex, L3_OCCLUSION_MAP_FILE)
+#endif
+#if L3_EMISSIVE_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L3_EmissiveTex, L3_EMISSIVE_MAP_FILE)
+#endif
+#endif // LAYER_COUNT > 3
+
+// --- Layer 4 Textures ---
+#if LAYER_COUNT > 4
+#if L4_ALBEDO_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L4_AlbedoTex, L4_ALBEDO_MAP_FILE)
+#endif
+#if L4_ALBEDO_SUB_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L4_AlbedoSubTex, L4_ALBEDO_SUB_MAP_FILE)
+#endif
+#if L4_NORMAL_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L4_NormalTex, L4_NORMAL_MAP_FILE)
+#endif
+#if L4_NORMAL_SUB_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L4_NormalSubTex, L4_NORMAL_SUB_MAP_FILE)
+#endif
+#if L4_SMOOTHNESS_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L4_SmoothTex, L4_SMOOTHNESS_MAP_FILE)
+#endif
+#if L4_METALNESS_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L4_MetalTex, L4_METALNESS_MAP_FILE)
+#endif
+#if L4_SPECULAR_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L4_SpecTex, L4_SPECULAR_MAP_FILE)
+#endif
+#if L4_OCCLUSION_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L4_OccTex, L4_OCCLUSION_MAP_FILE)
+#endif
+#if L4_EMISSIVE_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L4_EmissiveTex, L4_EMISSIVE_MAP_FILE)
+#endif
+#endif // LAYER_COUNT > 4
+
+// --- Layer 5 Textures ---
+#if LAYER_COUNT > 5
+#if L5_ALBEDO_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L5_AlbedoTex, L5_ALBEDO_MAP_FILE)
+#endif
+#if L5_ALBEDO_SUB_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L5_AlbedoSubTex, L5_ALBEDO_SUB_MAP_FILE)
+#endif
+#if L5_NORMAL_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L5_NormalTex, L5_NORMAL_MAP_FILE)
+#endif
+#if L5_NORMAL_SUB_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L5_NormalSubTex, L5_NORMAL_SUB_MAP_FILE)
+#endif
+#if L5_SMOOTHNESS_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L5_SmoothTex, L5_SMOOTHNESS_MAP_FILE)
+#endif
+#if L5_METALNESS_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L5_MetalTex, L5_METALNESS_MAP_FILE)
+#endif
+#if L5_SPECULAR_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L5_SpecTex, L5_SPECULAR_MAP_FILE)
+#endif
+#if L5_OCCLUSION_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L5_OccTex, L5_OCCLUSION_MAP_FILE)
+#endif
+#if L5_EMISSIVE_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L5_EmissiveTex, L5_EMISSIVE_MAP_FILE)
+#endif
+#endif // LAYER_COUNT > 5
+
+// --- Layer 6 Textures ---
+#if LAYER_COUNT > 6
+#if L6_ALBEDO_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L6_AlbedoTex, L6_ALBEDO_MAP_FILE)
+#endif
+#if L6_ALBEDO_SUB_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L6_AlbedoSubTex, L6_ALBEDO_SUB_MAP_FILE)
+#endif
+#if L6_NORMAL_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L6_NormalTex, L6_NORMAL_MAP_FILE)
+#endif
+#if L6_NORMAL_SUB_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L6_NormalSubTex, L6_NORMAL_SUB_MAP_FILE)
+#endif
+#if L6_SMOOTHNESS_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L6_SmoothTex, L6_SMOOTHNESS_MAP_FILE)
+#endif
+#if L6_METALNESS_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L6_MetalTex, L6_METALNESS_MAP_FILE)
+#endif
+#if L6_SPECULAR_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L6_SpecTex, L6_SPECULAR_MAP_FILE)
+#endif
+#if L6_OCCLUSION_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L6_OccTex, L6_OCCLUSION_MAP_FILE)
+#endif
+#if L6_EMISSIVE_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L6_EmissiveTex, L6_EMISSIVE_MAP_FILE)
+#endif
+#endif // LAYER_COUNT > 6
+
+// --- Layer 7 Textures ---
+#if LAYER_COUNT > 7
+#if L7_ALBEDO_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L7_AlbedoTex, L7_ALBEDO_MAP_FILE)
+#endif
+#if L7_ALBEDO_SUB_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L7_AlbedoSubTex, L7_ALBEDO_SUB_MAP_FILE)
+#endif
+#if L7_NORMAL_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L7_NormalTex, L7_NORMAL_MAP_FILE)
+#endif
+#if L7_NORMAL_SUB_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L7_NormalSubTex, L7_NORMAL_SUB_MAP_FILE)
+#endif
+#if L7_SMOOTHNESS_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L7_SmoothTex, L7_SMOOTHNESS_MAP_FILE)
+#endif
+#if L7_METALNESS_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L7_MetalTex, L7_METALNESS_MAP_FILE)
+#endif
+#if L7_SPECULAR_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L7_SpecTex, L7_SPECULAR_MAP_FILE)
+#endif
+#if L7_OCCLUSION_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L7_OccTex, L7_OCCLUSION_MAP_FILE)
+#endif
+#if L7_EMISSIVE_MAP_FROM == 1
+    DECLARE_LAYER_TEX(L7_EmissiveTex, L7_EMISSIVE_MAP_FILE)
+#endif
+#endif // LAYER_COUNT > 7
+
+// ==================== Structures ====================
+
+struct MaterialParam
+{
+    float3 normal;
+    float3 albedo;
+    float3 specular;
+    float3 emissive;
+    float  smoothness;
+    float  metalness;
+    float  emissiveIntensity;
+    float  alpha;
+    float  visibility;
+    float  customDataA;
+    float3 customDataB;
+    int    lightModel;
+};
+
+struct GbufferParam
+{
+    float4 buffer1 : COLOR0;
+    float4 buffer2 : COLOR1;
+    float4 buffer3 : COLOR2;
+    float4 buffer4 : COLOR3;
+};
+
+// ==================== Utility Functions ====================
+
+float3 EncodeNormal(float3 normal)
+{
+    float p = sqrt(-normal.z * 8 + 8);
+    float2 enc = normal.xy / p + 0.5f;
+    float2 enc255 = enc * 255;
+    float2 residual = floor(frac(enc255) * 16);
+    return float3(floor(enc255), residual.x * 16 + residual.y) / 255;
+}
+
+float luminance(float3 rgb)
+{
+    return dot(rgb, float3(0.299, 0.587, 0.114));
+}
+
+float3 srgb2linear(float3 rgb)
+{
+    return pow(max(abs(rgb), 1e-5), 2.2);
+}
+
+float srgb2linear_scalar(float v)
+{
+    return pow(max(abs(v), 1e-5), 2.2);
+}
+
+float SmoothnessToRoughness(float smoothness)
+{
+    return (1.0f - smoothness) * (1.0f - smoothness);
+}
+
+float3 RNMBlendUnpacked(float3 n1, float3 n2)
+{
+    n1 += float3( 0,  0, 1);
+    n2 *= float3(-1, -1, 1);
+    return normalize(n1 * dot(n1, n2) / n1.z - n2);
+}
+
+// ==================== G-Buffer Encode ====================
+
+GbufferParam EncodeGbufferMasked(MaterialParam material, float linearDepth)
+{
+    GbufferParam gbuffer;
+
+    gbuffer.buffer1.xyz = material.albedo * (1 - material.metalness);
+    gbuffer.buffer1.w   = material.smoothness;
+
+    float3 viewNormal = mul(material.normal, (float3x3)matWorldView);
+    viewNormal = normalize(viewNormal);
+
+    gbuffer.buffer2.xyz = EncodeNormal(viewNormal);
+    gbuffer.buffer2.w   = material.customDataA;
+
+    gbuffer.buffer3.xyz = lerp(material.specular, max(0.02, material.albedo), material.metalness);
+    gbuffer.buffer3.w   = 0;
+
+    if (material.lightModel != SHADINGMODELID_DEFAULT)
+    {
+        if (material.lightModel == SHADINGMODELID_EMISSIVE)
+        {
+            material.customDataB = material.emissive;
+        }
+        else if (material.lightModel != SHADINGMODELID_GLASS)
+        {
+            material.customDataB *= (1 - material.metalness);
+        }
+        gbuffer.buffer3 = float4(luminance(gbuffer.buffer3.xyz), material.customDataB);
+    }
+
+    gbuffer.buffer4 = float4(linearDepth, material.emissiveIntensity, material.visibility, material.lightModel);
+    gbuffer.buffer4.w += material.alpha * MAX_FRACTIONAL_8_BIT;
+
+    return gbuffer;
+}
+
+// ==================== TBN Computation ====================
+
+float3 ComputeTangentBinormalNormal(float3 N, float3 P, float2 coord, float3 tangentNormal)
+{
+    float3 dp1 = ddx(P);
+    float3 dp2 = ddy(P);
+    float2 duv1 = ddx(coord);
+    float2 duv2 = ddy(coord);
+
+    float3x3 M = float3x3(dp1, dp2, N);
+    float2x3 I = float2x3(cross(M[1], M[2]), cross(M[2], M[0]));
+    float3 T = mul(float2(duv1.x, duv2.x), I);
+    float3 B = mul(float2(duv1.y, duv2.y), I);
+
+    float scaleT = 1.0f / (dot(T, T) + 1e-6);
+    float scaleB = 1.0f / (dot(B, B) + 1e-6);
+
+    float3x3 tbnTransform;
+    tbnTransform[0] =  normalize(T * scaleT);
+    tbnTransform[1] = -normalize(B * scaleB);
+    tbnTransform[2] =  N;
+
+    return normalize(mul(tangentNormal, tbnTransform));
+}
+
+// ==================== Scalar Map Swizzle Helper ====================
+
+#define SWIZZLE_SCALAR(val4, swiz) \
+    ((swiz) == 1 ? (val4).g : ((swiz) == 2 ? (val4).b : ((swiz) == 3 ? (val4).a : (val4).r)))
+
+// ==================== Per-Layer Albedo Sampling Macros ====================
+// FROM=0: constant color (if APPLY_DIFFUSE=1, multiply by model texture)
+// FROM=1: external texture x tint
+
+#define CALC_LAYER_ALBEDO(N, baseTex) _CALC_LAYER_ALBEDO_##N(baseTex)
+
+#if L0_ALBEDO_MAP_FROM == 1
+    #define _CALC_LAYER_ALBEDO_0(baseTex) \
+        (srgb2linear(tex2D(L0_AlbedoTexSamp, coord).rgb) * srgb2linear((float3)L0_ALBEDO))
+#elif L0_ALBEDO_APPLY_DIFFUSE
+    #define _CALC_LAYER_ALBEDO_0(baseTex) \
+        ((baseTex) * srgb2linear((float3)L0_ALBEDO))
+#else
+    #define _CALC_LAYER_ALBEDO_0(baseTex) \
+        (srgb2linear((float3)L0_ALBEDO))
+#endif
+
+#if L1_ALBEDO_MAP_FROM == 1
+    #define _CALC_LAYER_ALBEDO_1(baseTex) \
+        (srgb2linear(tex2D(L1_AlbedoTexSamp, coord).rgb) * srgb2linear((float3)L1_ALBEDO))
+#elif L1_ALBEDO_APPLY_DIFFUSE
+    #define _CALC_LAYER_ALBEDO_1(baseTex) \
+        ((baseTex) * srgb2linear((float3)L1_ALBEDO))
+#else
+    #define _CALC_LAYER_ALBEDO_1(baseTex) \
+        (srgb2linear((float3)L1_ALBEDO))
+#endif
+
+#if L2_ALBEDO_MAP_FROM == 1
+    #define _CALC_LAYER_ALBEDO_2(baseTex) \
+        (srgb2linear(tex2D(L2_AlbedoTexSamp, coord).rgb) * srgb2linear((float3)L2_ALBEDO))
+#elif L2_ALBEDO_APPLY_DIFFUSE
+    #define _CALC_LAYER_ALBEDO_2(baseTex) \
+        ((baseTex) * srgb2linear((float3)L2_ALBEDO))
+#else
+    #define _CALC_LAYER_ALBEDO_2(baseTex) \
+        (srgb2linear((float3)L2_ALBEDO))
+#endif
+
+#if L3_ALBEDO_MAP_FROM == 1
+    #define _CALC_LAYER_ALBEDO_3(baseTex) \
+        (srgb2linear(tex2D(L3_AlbedoTexSamp, coord).rgb) * srgb2linear((float3)L3_ALBEDO))
+#elif L3_ALBEDO_APPLY_DIFFUSE
+    #define _CALC_LAYER_ALBEDO_3(baseTex) \
+        ((baseTex) * srgb2linear((float3)L3_ALBEDO))
+#else
+    #define _CALC_LAYER_ALBEDO_3(baseTex) \
+        (srgb2linear((float3)L3_ALBEDO))
+#endif
+
+#if L4_ALBEDO_MAP_FROM == 1
+    #define _CALC_LAYER_ALBEDO_4(baseTex) \
+        (srgb2linear(tex2D(L4_AlbedoTexSamp, coord).rgb) * srgb2linear((float3)L4_ALBEDO))
+#elif L4_ALBEDO_APPLY_DIFFUSE
+    #define _CALC_LAYER_ALBEDO_4(baseTex) \
+        ((baseTex) * srgb2linear((float3)L4_ALBEDO))
+#else
+    #define _CALC_LAYER_ALBEDO_4(baseTex) \
+        (srgb2linear((float3)L4_ALBEDO))
+#endif
+
+#if L5_ALBEDO_MAP_FROM == 1
+    #define _CALC_LAYER_ALBEDO_5(baseTex) \
+        (srgb2linear(tex2D(L5_AlbedoTexSamp, coord).rgb) * srgb2linear((float3)L5_ALBEDO))
+#elif L5_ALBEDO_APPLY_DIFFUSE
+    #define _CALC_LAYER_ALBEDO_5(baseTex) \
+        ((baseTex) * srgb2linear((float3)L5_ALBEDO))
+#else
+    #define _CALC_LAYER_ALBEDO_5(baseTex) \
+        (srgb2linear((float3)L5_ALBEDO))
+#endif
+
+#if L6_ALBEDO_MAP_FROM == 1
+    #define _CALC_LAYER_ALBEDO_6(baseTex) \
+        (srgb2linear(tex2D(L6_AlbedoTexSamp, coord).rgb) * srgb2linear((float3)L6_ALBEDO))
+#elif L6_ALBEDO_APPLY_DIFFUSE
+    #define _CALC_LAYER_ALBEDO_6(baseTex) \
+        ((baseTex) * srgb2linear((float3)L6_ALBEDO))
+#else
+    #define _CALC_LAYER_ALBEDO_6(baseTex) \
+        (srgb2linear((float3)L6_ALBEDO))
+#endif
+
+#if L7_ALBEDO_MAP_FROM == 1
+    #define _CALC_LAYER_ALBEDO_7(baseTex) \
+        (srgb2linear(tex2D(L7_AlbedoTexSamp, coord).rgb) * srgb2linear((float3)L7_ALBEDO))
+#elif L7_ALBEDO_APPLY_DIFFUSE
+    #define _CALC_LAYER_ALBEDO_7(baseTex) \
+        ((baseTex) * srgb2linear((float3)L7_ALBEDO))
+#else
+    #define _CALC_LAYER_ALBEDO_7(baseTex) \
+        (srgb2linear((float3)L7_ALBEDO))
+#endif
+
+// ==================== Per-Layer Sub-Albedo Apply Macros ====================
+
+#define APPLY_ALBEDO_SUB(N, albedo) _APPLY_ALBEDO_SUB_##N(albedo)
+
+// Sub-albedo blend: multiply(1), power(2), add(3), alpha blend(5)
+#if L0_ALBEDO_SUB_MAP_FROM == 1
+    #define _APPLY_ALBEDO_SUB_0(a) _albedoSubBlend(a, tex2D(L0_AlbedoSubTexSamp, coord), L0_ALBEDO_SUB_ENABLE)
+#else
+    #define _APPLY_ALBEDO_SUB_0(a) (a)
+#endif
+#if L1_ALBEDO_SUB_MAP_FROM == 1
+    #define _APPLY_ALBEDO_SUB_1(a) _albedoSubBlend(a, tex2D(L1_AlbedoSubTexSamp, coord), L1_ALBEDO_SUB_ENABLE)
+#else
+    #define _APPLY_ALBEDO_SUB_1(a) (a)
+#endif
+#if L2_ALBEDO_SUB_MAP_FROM == 1
+    #define _APPLY_ALBEDO_SUB_2(a) _albedoSubBlend(a, tex2D(L2_AlbedoSubTexSamp, coord), L2_ALBEDO_SUB_ENABLE)
+#else
+    #define _APPLY_ALBEDO_SUB_2(a) (a)
+#endif
+#if L3_ALBEDO_SUB_MAP_FROM == 1
+    #define _APPLY_ALBEDO_SUB_3(a) _albedoSubBlend(a, tex2D(L3_AlbedoSubTexSamp, coord), L3_ALBEDO_SUB_ENABLE)
+#else
+    #define _APPLY_ALBEDO_SUB_3(a) (a)
+#endif
+#if L4_ALBEDO_SUB_MAP_FROM == 1
+    #define _APPLY_ALBEDO_SUB_4(a) _albedoSubBlend(a, tex2D(L4_AlbedoSubTexSamp, coord), L4_ALBEDO_SUB_ENABLE)
+#else
+    #define _APPLY_ALBEDO_SUB_4(a) (a)
+#endif
+#if L5_ALBEDO_SUB_MAP_FROM == 1
+    #define _APPLY_ALBEDO_SUB_5(a) _albedoSubBlend(a, tex2D(L5_AlbedoSubTexSamp, coord), L5_ALBEDO_SUB_ENABLE)
+#else
+    #define _APPLY_ALBEDO_SUB_5(a) (a)
+#endif
+
+#if L6_ALBEDO_SUB_MAP_FROM == 1
+    #define _APPLY_ALBEDO_SUB_6(a) _albedoSubBlend(a, tex2D(L6_AlbedoSubTexSamp, coord), L6_ALBEDO_SUB_ENABLE)
+#else
+    #define _APPLY_ALBEDO_SUB_6(a) (a)
+#endif
+
+#if L7_ALBEDO_SUB_MAP_FROM == 1
+    #define _APPLY_ALBEDO_SUB_7(a) _albedoSubBlend(a, tex2D(L7_AlbedoSubTexSamp, coord), L7_ALBEDO_SUB_ENABLE)
+#else
+    #define _APPLY_ALBEDO_SUB_7(a) (a)
+#endif
+
+// ==================== Per-Layer Smoothness Sampling Macros ====================
+
+#define CALC_LAYER_SMOOTHNESS(N) _CALC_LAYER_SMOOTHNESS_##N
+
+#if L0_SMOOTHNESS_MAP_FROM == 1
+    #define _CALC_LAYER_SMOOTHNESS_0 \
+        (SWIZZLE_SCALAR(tex2D(L0_SmoothTexSamp, coord * L0_SMOOTHNESS_MAP_LOOP), L0_SMOOTHNESS_MAP_SWIZZLE) \
+         * (L0_SMOOTHNESS_MAP_TYPE == 1 ? -1.0 : 1.0) + (L0_SMOOTHNESS_MAP_TYPE == 1 ? 1.0 : 0.0))
+#else
+    #define _CALC_LAYER_SMOOTHNESS_0 ((float)L0_SMOOTHNESS)
+#endif
+
+#if L1_SMOOTHNESS_MAP_FROM == 1
+    #define _CALC_LAYER_SMOOTHNESS_1 \
+        (SWIZZLE_SCALAR(tex2D(L1_SmoothTexSamp, coord * L1_SMOOTHNESS_MAP_LOOP), L1_SMOOTHNESS_MAP_SWIZZLE) \
+         * (L1_SMOOTHNESS_MAP_TYPE == 1 ? -1.0 : 1.0) + (L1_SMOOTHNESS_MAP_TYPE == 1 ? 1.0 : 0.0))
+#else
+    #define _CALC_LAYER_SMOOTHNESS_1 ((float)L1_SMOOTHNESS)
+#endif
+
+#if L2_SMOOTHNESS_MAP_FROM == 1
+    #define _CALC_LAYER_SMOOTHNESS_2 \
+        (SWIZZLE_SCALAR(tex2D(L2_SmoothTexSamp, coord * L2_SMOOTHNESS_MAP_LOOP), L2_SMOOTHNESS_MAP_SWIZZLE) \
+         * (L2_SMOOTHNESS_MAP_TYPE == 1 ? -1.0 : 1.0) + (L2_SMOOTHNESS_MAP_TYPE == 1 ? 1.0 : 0.0))
+#else
+    #define _CALC_LAYER_SMOOTHNESS_2 ((float)L2_SMOOTHNESS)
+#endif
+
+#if L3_SMOOTHNESS_MAP_FROM == 1
+    #define _CALC_LAYER_SMOOTHNESS_3 \
+        (SWIZZLE_SCALAR(tex2D(L3_SmoothTexSamp, coord * L3_SMOOTHNESS_MAP_LOOP), L3_SMOOTHNESS_MAP_SWIZZLE) \
+         * (L3_SMOOTHNESS_MAP_TYPE == 1 ? -1.0 : 1.0) + (L3_SMOOTHNESS_MAP_TYPE == 1 ? 1.0 : 0.0))
+#else
+    #define _CALC_LAYER_SMOOTHNESS_3 ((float)L3_SMOOTHNESS)
+#endif
+
+#if L4_SMOOTHNESS_MAP_FROM == 1
+    #define _CALC_LAYER_SMOOTHNESS_4 \
+        (SWIZZLE_SCALAR(tex2D(L4_SmoothTexSamp, coord * L4_SMOOTHNESS_MAP_LOOP), L4_SMOOTHNESS_MAP_SWIZZLE) \
+         * (L4_SMOOTHNESS_MAP_TYPE == 1 ? -1.0 : 1.0) + (L4_SMOOTHNESS_MAP_TYPE == 1 ? 1.0 : 0.0))
+#else
+    #define _CALC_LAYER_SMOOTHNESS_4 ((float)L4_SMOOTHNESS)
+#endif
+
+#if L5_SMOOTHNESS_MAP_FROM == 1
+    #define _CALC_LAYER_SMOOTHNESS_5 \
+        (SWIZZLE_SCALAR(tex2D(L5_SmoothTexSamp, coord * L5_SMOOTHNESS_MAP_LOOP), L5_SMOOTHNESS_MAP_SWIZZLE) \
+         * (L5_SMOOTHNESS_MAP_TYPE == 1 ? -1.0 : 1.0) + (L5_SMOOTHNESS_MAP_TYPE == 1 ? 1.0 : 0.0))
+#else
+    #define _CALC_LAYER_SMOOTHNESS_5 ((float)L5_SMOOTHNESS)
+#endif
+
+#if L6_SMOOTHNESS_MAP_FROM == 1
+    #define _CALC_LAYER_SMOOTHNESS_6 \
+        (SWIZZLE_SCALAR(tex2D(L6_SmoothTexSamp, coord * L6_SMOOTHNESS_MAP_LOOP), L6_SMOOTHNESS_MAP_SWIZZLE) \
+         * (L6_SMOOTHNESS_MAP_TYPE == 1 ? -1.0 : 1.0) + (L6_SMOOTHNESS_MAP_TYPE == 1 ? 1.0 : 0.0))
+#else
+    #define _CALC_LAYER_SMOOTHNESS_6 ((float)L6_SMOOTHNESS)
+#endif
+
+#if L7_SMOOTHNESS_MAP_FROM == 1
+    #define _CALC_LAYER_SMOOTHNESS_7 \
+        (SWIZZLE_SCALAR(tex2D(L7_SmoothTexSamp, coord * L7_SMOOTHNESS_MAP_LOOP), L7_SMOOTHNESS_MAP_SWIZZLE) \
+         * (L7_SMOOTHNESS_MAP_TYPE == 1 ? -1.0 : 1.0) + (L7_SMOOTHNESS_MAP_TYPE == 1 ? 1.0 : 0.0))
+#else
+    #define _CALC_LAYER_SMOOTHNESS_7 ((float)L7_SMOOTHNESS)
+#endif
+
+// ==================== Per-Layer Metalness Sampling Macros ====================
+
+#define CALC_LAYER_METALNESS(N) _CALC_LAYER_METALNESS_##N
+
+#if L0_METALNESS_MAP_FROM == 1
+    #define _CALC_LAYER_METALNESS_0 SWIZZLE_SCALAR(tex2D(L0_MetalTexSamp, coord * L0_METALNESS_MAP_LOOP), L0_METALNESS_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_METALNESS_0 ((float)L0_METALNESS)
+#endif
+#if L1_METALNESS_MAP_FROM == 1
+    #define _CALC_LAYER_METALNESS_1 SWIZZLE_SCALAR(tex2D(L1_MetalTexSamp, coord * L1_METALNESS_MAP_LOOP), L1_METALNESS_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_METALNESS_1 ((float)L1_METALNESS)
+#endif
+#if L2_METALNESS_MAP_FROM == 1
+    #define _CALC_LAYER_METALNESS_2 SWIZZLE_SCALAR(tex2D(L2_MetalTexSamp, coord * L2_METALNESS_MAP_LOOP), L2_METALNESS_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_METALNESS_2 ((float)L2_METALNESS)
+#endif
+#if L3_METALNESS_MAP_FROM == 1
+    #define _CALC_LAYER_METALNESS_3 SWIZZLE_SCALAR(tex2D(L3_MetalTexSamp, coord * L3_METALNESS_MAP_LOOP), L3_METALNESS_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_METALNESS_3 ((float)L3_METALNESS)
+#endif
+#if L4_METALNESS_MAP_FROM == 1
+    #define _CALC_LAYER_METALNESS_4 SWIZZLE_SCALAR(tex2D(L4_MetalTexSamp, coord * L4_METALNESS_MAP_LOOP), L4_METALNESS_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_METALNESS_4 ((float)L4_METALNESS)
+#endif
+#if L5_METALNESS_MAP_FROM == 1
+    #define _CALC_LAYER_METALNESS_5 SWIZZLE_SCALAR(tex2D(L5_MetalTexSamp, coord * L5_METALNESS_MAP_LOOP), L5_METALNESS_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_METALNESS_5 ((float)L5_METALNESS)
+#endif
+
+#if L6_METALNESS_MAP_FROM == 1
+    #define _CALC_LAYER_METALNESS_6 SWIZZLE_SCALAR(tex2D(L6_MetalTexSamp, coord * L6_METALNESS_MAP_LOOP), L6_METALNESS_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_METALNESS_6 ((float)L6_METALNESS)
+#endif
+
+#if L7_METALNESS_MAP_FROM == 1
+    #define _CALC_LAYER_METALNESS_7 SWIZZLE_SCALAR(tex2D(L7_MetalTexSamp, coord * L7_METALNESS_MAP_LOOP), L7_METALNESS_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_METALNESS_7 ((float)L7_METALNESS)
+#endif
+
+// ==================== Per-Layer Specular Sampling Macros ====================
+
+#define CALC_LAYER_SPECULAR(N) _CALC_LAYER_SPECULAR_##N
+
+#if L0_SPECULAR_MAP_FROM == 1
+    #define _CALC_LAYER_SPECULAR_0 SWIZZLE_SCALAR(tex2D(L0_SpecTexSamp, coord * L0_SPECULAR_MAP_LOOP), L0_SPECULAR_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_SPECULAR_0 ((float)L0_SPECULAR)
+#endif
+#if L1_SPECULAR_MAP_FROM == 1
+    #define _CALC_LAYER_SPECULAR_1 SWIZZLE_SCALAR(tex2D(L1_SpecTexSamp, coord * L1_SPECULAR_MAP_LOOP), L1_SPECULAR_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_SPECULAR_1 ((float)L1_SPECULAR)
+#endif
+#if L2_SPECULAR_MAP_FROM == 1
+    #define _CALC_LAYER_SPECULAR_2 SWIZZLE_SCALAR(tex2D(L2_SpecTexSamp, coord * L2_SPECULAR_MAP_LOOP), L2_SPECULAR_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_SPECULAR_2 ((float)L2_SPECULAR)
+#endif
+#if L3_SPECULAR_MAP_FROM == 1
+    #define _CALC_LAYER_SPECULAR_3 SWIZZLE_SCALAR(tex2D(L3_SpecTexSamp, coord * L3_SPECULAR_MAP_LOOP), L3_SPECULAR_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_SPECULAR_3 ((float)L3_SPECULAR)
+#endif
+#if L4_SPECULAR_MAP_FROM == 1
+    #define _CALC_LAYER_SPECULAR_4 SWIZZLE_SCALAR(tex2D(L4_SpecTexSamp, coord * L4_SPECULAR_MAP_LOOP), L4_SPECULAR_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_SPECULAR_4 ((float)L4_SPECULAR)
+#endif
+#if L5_SPECULAR_MAP_FROM == 1
+    #define _CALC_LAYER_SPECULAR_5 SWIZZLE_SCALAR(tex2D(L5_SpecTexSamp, coord * L5_SPECULAR_MAP_LOOP), L5_SPECULAR_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_SPECULAR_5 ((float)L5_SPECULAR)
+#endif
+
+#if L6_SPECULAR_MAP_FROM == 1
+    #define _CALC_LAYER_SPECULAR_6 SWIZZLE_SCALAR(tex2D(L6_SpecTexSamp, coord * L6_SPECULAR_MAP_LOOP), L6_SPECULAR_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_SPECULAR_6 ((float)L6_SPECULAR)
+#endif
+
+#if L7_SPECULAR_MAP_FROM == 1
+    #define _CALC_LAYER_SPECULAR_7 SWIZZLE_SCALAR(tex2D(L7_SpecTexSamp, coord * L7_SPECULAR_MAP_LOOP), L7_SPECULAR_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_SPECULAR_7 ((float)L7_SPECULAR)
+#endif
+
+// ==================== Per-Layer Occlusion Sampling Macros ====================
+
+#define CALC_LAYER_OCCLUSION(N) _CALC_LAYER_OCCLUSION_##N
+
+#if L0_OCCLUSION_MAP_FROM == 1
+    #define _CALC_LAYER_OCCLUSION_0 SWIZZLE_SCALAR(tex2D(L0_OccTexSamp, coord * L0_OCCLUSION_MAP_LOOP), L0_OCCLUSION_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_OCCLUSION_0 (1.0)
+#endif
+#if L1_OCCLUSION_MAP_FROM == 1
+    #define _CALC_LAYER_OCCLUSION_1 SWIZZLE_SCALAR(tex2D(L1_OccTexSamp, coord * L1_OCCLUSION_MAP_LOOP), L1_OCCLUSION_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_OCCLUSION_1 (1.0)
+#endif
+#if L2_OCCLUSION_MAP_FROM == 1
+    #define _CALC_LAYER_OCCLUSION_2 SWIZZLE_SCALAR(tex2D(L2_OccTexSamp, coord * L2_OCCLUSION_MAP_LOOP), L2_OCCLUSION_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_OCCLUSION_2 (1.0)
+#endif
+#if L3_OCCLUSION_MAP_FROM == 1
+    #define _CALC_LAYER_OCCLUSION_3 SWIZZLE_SCALAR(tex2D(L3_OccTexSamp, coord * L3_OCCLUSION_MAP_LOOP), L3_OCCLUSION_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_OCCLUSION_3 (1.0)
+#endif
+#if L4_OCCLUSION_MAP_FROM == 1
+    #define _CALC_LAYER_OCCLUSION_4 SWIZZLE_SCALAR(tex2D(L4_OccTexSamp, coord * L4_OCCLUSION_MAP_LOOP), L4_OCCLUSION_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_OCCLUSION_4 (1.0)
+#endif
+#if L5_OCCLUSION_MAP_FROM == 1
+    #define _CALC_LAYER_OCCLUSION_5 SWIZZLE_SCALAR(tex2D(L5_OccTexSamp, coord * L5_OCCLUSION_MAP_LOOP), L5_OCCLUSION_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_OCCLUSION_5 (1.0)
+#endif
+
+#if L6_OCCLUSION_MAP_FROM == 1
+    #define _CALC_LAYER_OCCLUSION_6 SWIZZLE_SCALAR(tex2D(L6_OccTexSamp, coord * L6_OCCLUSION_MAP_LOOP), L6_OCCLUSION_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_OCCLUSION_6 (1.0)
+#endif
+
+#if L7_OCCLUSION_MAP_FROM == 1
+    #define _CALC_LAYER_OCCLUSION_7 SWIZZLE_SCALAR(tex2D(L7_OccTexSamp, coord * L7_OCCLUSION_MAP_LOOP), L7_OCCLUSION_MAP_SWIZZLE)
+#else
+    #define _CALC_LAYER_OCCLUSION_7 (1.0)
+#endif
+
+// ==================== Per-Layer Emissive Sampling Macros ====================
+
+#define CALC_LAYER_EMISSIVE(N) _CALC_LAYER_EMISSIVE_##N
+
+#if L0_EMISSIVE_MAP_FROM == 1
+    #define _CALC_LAYER_EMISSIVE_0 \
+        (srgb2linear(tex2D(L0_EmissiveTexSamp, coord * L0_EMISSIVE_MAP_LOOP).rgb) * srgb2linear((float3)L0_EMISSIVE))
+#else
+    #define _CALC_LAYER_EMISSIVE_0 (srgb2linear((float3)L0_EMISSIVE))
+#endif
+#if L1_EMISSIVE_MAP_FROM == 1
+    #define _CALC_LAYER_EMISSIVE_1 \
+        (srgb2linear(tex2D(L1_EmissiveTexSamp, coord * L1_EMISSIVE_MAP_LOOP).rgb) * srgb2linear((float3)L1_EMISSIVE))
+#else
+    #define _CALC_LAYER_EMISSIVE_1 (srgb2linear((float3)L1_EMISSIVE))
+#endif
+#if L2_EMISSIVE_MAP_FROM == 1
+    #define _CALC_LAYER_EMISSIVE_2 \
+        (srgb2linear(tex2D(L2_EmissiveTexSamp, coord * L2_EMISSIVE_MAP_LOOP).rgb) * srgb2linear((float3)L2_EMISSIVE))
+#else
+    #define _CALC_LAYER_EMISSIVE_2 (srgb2linear((float3)L2_EMISSIVE))
+#endif
+#if L3_EMISSIVE_MAP_FROM == 1
+    #define _CALC_LAYER_EMISSIVE_3 \
+        (srgb2linear(tex2D(L3_EmissiveTexSamp, coord * L3_EMISSIVE_MAP_LOOP).rgb) * srgb2linear((float3)L3_EMISSIVE))
+#else
+    #define _CALC_LAYER_EMISSIVE_3 (srgb2linear((float3)L3_EMISSIVE))
+#endif
+#if L4_EMISSIVE_MAP_FROM == 1
+    #define _CALC_LAYER_EMISSIVE_4 \
+        (srgb2linear(tex2D(L4_EmissiveTexSamp, coord * L4_EMISSIVE_MAP_LOOP).rgb) * srgb2linear((float3)L4_EMISSIVE))
+#else
+    #define _CALC_LAYER_EMISSIVE_4 (srgb2linear((float3)L4_EMISSIVE))
+#endif
+#if L5_EMISSIVE_MAP_FROM == 1
+    #define _CALC_LAYER_EMISSIVE_5 \
+        (srgb2linear(tex2D(L5_EmissiveTexSamp, coord * L5_EMISSIVE_MAP_LOOP).rgb) * srgb2linear((float3)L5_EMISSIVE))
+#else
+    #define _CALC_LAYER_EMISSIVE_5 (srgb2linear((float3)L5_EMISSIVE))
+#endif
+
+#if L6_EMISSIVE_MAP_FROM == 1
+    #define _CALC_LAYER_EMISSIVE_6 \
+        (srgb2linear(tex2D(L6_EmissiveTexSamp, coord * L6_EMISSIVE_MAP_LOOP).rgb) * srgb2linear((float3)L6_EMISSIVE))
+#else
+    #define _CALC_LAYER_EMISSIVE_6 (srgb2linear((float3)L6_EMISSIVE))
+#endif
+
+#if L7_EMISSIVE_MAP_FROM == 1
+    #define _CALC_LAYER_EMISSIVE_7 \
+        (srgb2linear(tex2D(L7_EmissiveTexSamp, coord * L7_EMISSIVE_MAP_LOOP).rgb) * srgb2linear((float3)L7_EMISSIVE))
+#else
+    #define _CALC_LAYER_EMISSIVE_7 (srgb2linear((float3)L7_EMISSIVE))
+#endif
+
+// ==================== Per-Layer Normal Sampling Macros ====================
+// Returns tangent-space normal for each layer (no normal map = 0,0,1)
+// When both NORMAL + NORMAL_SUB are present, composed via RNMBlend
+
+#define CALC_LAYER_TANGENT_NORMAL(N) _CALC_LAYER_TN_##N(coord)
+
+// Normal map sampling helper
+#define _SAMPLE_NORMAL_RGB(samp, c, loop, scale, type) \
+    _sampleNormalRGB(samp, c, loop, scale, type)
+
+// ---- Layer 0 Normal ----
+#if L0_NORMAL_MAP_FROM == 1 && L0_NORMAL_SUB_MAP_FROM == 1
+    #define _CALC_LAYER_TN_0(c) \
+        RNMBlendUnpacked( \
+            _sampleNormalMap(L0_NormalTexSamp, c, L0_NORMAL_MAP_LOOP, L0_NORMAL_MAP_SCALE, L0_NORMAL_MAP_TYPE), \
+            _sampleNormalMap(L0_NormalSubTexSamp, c, L0_NORMAL_SUB_MAP_LOOP, L0_NORMAL_SUB_MAP_SCALE, L0_NORMAL_SUB_MAP_TYPE))
+#elif L0_NORMAL_MAP_FROM == 1
+    #define _CALC_LAYER_TN_0(c) \
+        _sampleNormalMap(L0_NormalTexSamp, c, L0_NORMAL_MAP_LOOP, L0_NORMAL_MAP_SCALE, L0_NORMAL_MAP_TYPE)
+#elif L0_NORMAL_SUB_MAP_FROM == 1
+    #define _CALC_LAYER_TN_0(c) \
+        _sampleNormalMap(L0_NormalSubTexSamp, c, L0_NORMAL_SUB_MAP_LOOP, L0_NORMAL_SUB_MAP_SCALE, L0_NORMAL_SUB_MAP_TYPE)
+#else
+    #define _CALC_LAYER_TN_0(c) float3(0, 0, 1)
+#endif
+
+// ---- Layer 1 Normal ----
+#if L1_NORMAL_MAP_FROM == 1 && L1_NORMAL_SUB_MAP_FROM == 1
+    #define _CALC_LAYER_TN_1(c) \
+        RNMBlendUnpacked( \
+            _sampleNormalMap(L1_NormalTexSamp, c, L1_NORMAL_MAP_LOOP, L1_NORMAL_MAP_SCALE, L1_NORMAL_MAP_TYPE), \
+            _sampleNormalMap(L1_NormalSubTexSamp, c, L1_NORMAL_SUB_MAP_LOOP, L1_NORMAL_SUB_MAP_SCALE, L1_NORMAL_SUB_MAP_TYPE))
+#elif L1_NORMAL_MAP_FROM == 1
+    #define _CALC_LAYER_TN_1(c) \
+        _sampleNormalMap(L1_NormalTexSamp, c, L1_NORMAL_MAP_LOOP, L1_NORMAL_MAP_SCALE, L1_NORMAL_MAP_TYPE)
+#elif L1_NORMAL_SUB_MAP_FROM == 1
+    #define _CALC_LAYER_TN_1(c) \
+        _sampleNormalMap(L1_NormalSubTexSamp, c, L1_NORMAL_SUB_MAP_LOOP, L1_NORMAL_SUB_MAP_SCALE, L1_NORMAL_SUB_MAP_TYPE)
+#else
+    #define _CALC_LAYER_TN_1(c) float3(0, 0, 1)
+#endif
+
+// ---- Layer 2 Normal ----
+#if L2_NORMAL_MAP_FROM == 1 && L2_NORMAL_SUB_MAP_FROM == 1
+    #define _CALC_LAYER_TN_2(c) \
+        RNMBlendUnpacked( \
+            _sampleNormalMap(L2_NormalTexSamp, c, L2_NORMAL_MAP_LOOP, L2_NORMAL_MAP_SCALE, L2_NORMAL_MAP_TYPE), \
+            _sampleNormalMap(L2_NormalSubTexSamp, c, L2_NORMAL_SUB_MAP_LOOP, L2_NORMAL_SUB_MAP_SCALE, L2_NORMAL_SUB_MAP_TYPE))
+#elif L2_NORMAL_MAP_FROM == 1
+    #define _CALC_LAYER_TN_2(c) \
+        _sampleNormalMap(L2_NormalTexSamp, c, L2_NORMAL_MAP_LOOP, L2_NORMAL_MAP_SCALE, L2_NORMAL_MAP_TYPE)
+#elif L2_NORMAL_SUB_MAP_FROM == 1
+    #define _CALC_LAYER_TN_2(c) \
+        _sampleNormalMap(L2_NormalSubTexSamp, c, L2_NORMAL_SUB_MAP_LOOP, L2_NORMAL_SUB_MAP_SCALE, L2_NORMAL_SUB_MAP_TYPE)
+#else
+    #define _CALC_LAYER_TN_2(c) float3(0, 0, 1)
+#endif
+
+// ---- Layer 3 Normal ----
+#if L3_NORMAL_MAP_FROM == 1 && L3_NORMAL_SUB_MAP_FROM == 1
+    #define _CALC_LAYER_TN_3(c) \
+        RNMBlendUnpacked( \
+            _sampleNormalMap(L3_NormalTexSamp, c, L3_NORMAL_MAP_LOOP, L3_NORMAL_MAP_SCALE, L3_NORMAL_MAP_TYPE), \
+            _sampleNormalMap(L3_NormalSubTexSamp, c, L3_NORMAL_SUB_MAP_LOOP, L3_NORMAL_SUB_MAP_SCALE, L3_NORMAL_SUB_MAP_TYPE))
+#elif L3_NORMAL_MAP_FROM == 1
+    #define _CALC_LAYER_TN_3(c) \
+        _sampleNormalMap(L3_NormalTexSamp, c, L3_NORMAL_MAP_LOOP, L3_NORMAL_MAP_SCALE, L3_NORMAL_MAP_TYPE)
+#elif L3_NORMAL_SUB_MAP_FROM == 1
+    #define _CALC_LAYER_TN_3(c) \
+        _sampleNormalMap(L3_NormalSubTexSamp, c, L3_NORMAL_SUB_MAP_LOOP, L3_NORMAL_SUB_MAP_SCALE, L3_NORMAL_SUB_MAP_TYPE)
+#else
+    #define _CALC_LAYER_TN_3(c) float3(0, 0, 1)
+#endif
+
+// ---- Layer 4 Normal ----
+#if L4_NORMAL_MAP_FROM == 1 && L4_NORMAL_SUB_MAP_FROM == 1
+    #define _CALC_LAYER_TN_4(c) \
+        RNMBlendUnpacked( \
+            _sampleNormalMap(L4_NormalTexSamp, c, L4_NORMAL_MAP_LOOP, L4_NORMAL_MAP_SCALE, L4_NORMAL_MAP_TYPE), \
+            _sampleNormalMap(L4_NormalSubTexSamp, c, L4_NORMAL_SUB_MAP_LOOP, L4_NORMAL_SUB_MAP_SCALE, L4_NORMAL_SUB_MAP_TYPE))
+#elif L4_NORMAL_MAP_FROM == 1
+    #define _CALC_LAYER_TN_4(c) \
+        _sampleNormalMap(L4_NormalTexSamp, c, L4_NORMAL_MAP_LOOP, L4_NORMAL_MAP_SCALE, L4_NORMAL_MAP_TYPE)
+#elif L4_NORMAL_SUB_MAP_FROM == 1
+    #define _CALC_LAYER_TN_4(c) \
+        _sampleNormalMap(L4_NormalSubTexSamp, c, L4_NORMAL_SUB_MAP_LOOP, L4_NORMAL_SUB_MAP_SCALE, L4_NORMAL_SUB_MAP_TYPE)
+#else
+    #define _CALC_LAYER_TN_4(c) float3(0, 0, 1)
+#endif
+
+// ---- Layer 5 Normal ----
+#if L5_NORMAL_MAP_FROM == 1 && L5_NORMAL_SUB_MAP_FROM == 1
+    #define _CALC_LAYER_TN_5(c) \
+        RNMBlendUnpacked( \
+            _sampleNormalMap(L5_NormalTexSamp, c, L5_NORMAL_MAP_LOOP, L5_NORMAL_MAP_SCALE, L5_NORMAL_MAP_TYPE), \
+            _sampleNormalMap(L5_NormalSubTexSamp, c, L5_NORMAL_SUB_MAP_LOOP, L5_NORMAL_SUB_MAP_SCALE, L5_NORMAL_SUB_MAP_TYPE))
+#elif L5_NORMAL_MAP_FROM == 1
+    #define _CALC_LAYER_TN_5(c) \
+        _sampleNormalMap(L5_NormalTexSamp, c, L5_NORMAL_MAP_LOOP, L5_NORMAL_MAP_SCALE, L5_NORMAL_MAP_TYPE)
+#elif L5_NORMAL_SUB_MAP_FROM == 1
+    #define _CALC_LAYER_TN_5(c) \
+        _sampleNormalMap(L5_NormalSubTexSamp, c, L5_NORMAL_SUB_MAP_LOOP, L5_NORMAL_SUB_MAP_SCALE, L5_NORMAL_SUB_MAP_TYPE)
+#else
+    #define _CALC_LAYER_TN_5(c) float3(0, 0, 1)
+#endif
+
+#if L6_NORMAL_MAP_FROM == 1 && L6_NORMAL_SUB_MAP_FROM == 1
+    #define _CALC_LAYER_TN_6(c) \
+        RNMBlendUnpacked( \
+            _sampleNormalMap(L6_NormalTexSamp, c, L6_NORMAL_MAP_LOOP, L6_NORMAL_MAP_SCALE, L6_NORMAL_MAP_TYPE), \
+            _sampleNormalMap(L6_NormalSubTexSamp, c, L6_NORMAL_SUB_MAP_LOOP, L6_NORMAL_SUB_MAP_SCALE, L6_NORMAL_SUB_MAP_TYPE))
+#elif L6_NORMAL_MAP_FROM == 1
+    #define _CALC_LAYER_TN_6(c) \
+        _sampleNormalMap(L6_NormalTexSamp, c, L6_NORMAL_MAP_LOOP, L6_NORMAL_MAP_SCALE, L6_NORMAL_MAP_TYPE)
+#elif L6_NORMAL_SUB_MAP_FROM == 1
+    #define _CALC_LAYER_TN_6(c) \
+        _sampleNormalMap(L6_NormalSubTexSamp, c, L6_NORMAL_SUB_MAP_LOOP, L6_NORMAL_SUB_MAP_SCALE, L6_NORMAL_SUB_MAP_TYPE)
+#else
+    #define _CALC_LAYER_TN_6(c) float3(0, 0, 1)
+#endif
+
+#if L7_NORMAL_MAP_FROM == 1 && L7_NORMAL_SUB_MAP_FROM == 1
+    #define _CALC_LAYER_TN_7(c) \
+        RNMBlendUnpacked( \
+            _sampleNormalMap(L7_NormalTexSamp, c, L7_NORMAL_MAP_LOOP, L7_NORMAL_MAP_SCALE, L7_NORMAL_MAP_TYPE), \
+            _sampleNormalMap(L7_NormalSubTexSamp, c, L7_NORMAL_SUB_MAP_LOOP, L7_NORMAL_SUB_MAP_SCALE, L7_NORMAL_SUB_MAP_TYPE))
+#elif L7_NORMAL_MAP_FROM == 1
+    #define _CALC_LAYER_TN_7(c) \
+        _sampleNormalMap(L7_NormalTexSamp, c, L7_NORMAL_MAP_LOOP, L7_NORMAL_MAP_SCALE, L7_NORMAL_MAP_TYPE)
+#elif L7_NORMAL_SUB_MAP_FROM == 1
+    #define _CALC_LAYER_TN_7(c) \
+        _sampleNormalMap(L7_NormalSubTexSamp, c, L7_NORMAL_SUB_MAP_LOOP, L7_NORMAL_SUB_MAP_SCALE, L7_NORMAL_SUB_MAP_TYPE)
+#else
+    #define _CALC_LAYER_TN_7(c) float3(0, 0, 1)
+#endif
+
+// Whether any layer has a normal map enabled
+#define _ANY_NORMAL_MAP \
+    (L0_NORMAL_MAP_FROM || L0_NORMAL_SUB_MAP_FROM || \
+     L1_NORMAL_MAP_FROM || L1_NORMAL_SUB_MAP_FROM || \
+     L2_NORMAL_MAP_FROM || L2_NORMAL_SUB_MAP_FROM || \
+     L3_NORMAL_MAP_FROM || L3_NORMAL_SUB_MAP_FROM || \
+     L4_NORMAL_MAP_FROM || L4_NORMAL_SUB_MAP_FROM || \
+     L5_NORMAL_MAP_FROM || L5_NORMAL_SUB_MAP_FROM || \
+     L6_NORMAL_MAP_FROM || L6_NORMAL_SUB_MAP_FROM || \
+     L7_NORMAL_MAP_FROM || L7_NORMAL_SUB_MAP_FROM)
+
+// ==================== Normal Map Sampling Function ====================
+
+float3 _sampleNormalMap(sampler src, float2 c, float loop, float scale, int type)
+{
+    float3 tn = tex2D(src, c * loop).rgb * 2 - 1;
+    if (type == 1)
+        tn.z = sqrt(1.0 - tn.x * tn.x - tn.y * tn.y);
+    tn.rg *= scale;
+    return normalize(tn);
+}
+
+// ==================== Sub-Albedo Blend Function ====================
+
+float3 _albedoSubBlend(float3 base, float4 sub, int mode)
+{
+    float3 s = srgb2linear(sub.rgb);
+    if (mode == 1) return base * s;
+    if (mode == 2) return pow(max(base, 1e-5), s);
+    if (mode == 3) return base + s;
+    if (mode == 5) return lerp(base, s, sub.a);
+    return base * s;
+}
+
+// ==================== Alpha Function (Shared) ====================
+
+float GetAlpha(float2 coord)
+{
+#if ALPHA_MAP_FROM == 3
+    float4 alphaValues = use_texture ? tex2D(DiffuseMapSamp, coord) * MaterialDiffuse.a : MaterialDiffuse.a;
+    #if ALPHA_MAP_SWIZZLE == 0
+        return saturate(alphaValues.r);
+    #elif ALPHA_MAP_SWIZZLE == 1
+        return saturate(alphaValues.g);
+    #elif ALPHA_MAP_SWIZZLE == 2
+        return saturate(alphaValues.b);
+    #else
+        return saturate(alphaValues.a);
+    #endif
+#else
+    return saturate(MaterialDiffuse.a);
+#endif
+}
+
+// ==================== Layer Parameter Arrays ====================
+// Non-blendable parameters accessed by dominantLayer index
+
+static const int layerShadingModel[8] = {
+    L0_SHADING_MODEL, L1_SHADING_MODEL, L2_SHADING_MODEL,
+    L3_SHADING_MODEL, L4_SHADING_MODEL, L5_SHADING_MODEL,
+    L6_SHADING_MODEL, L7_SHADING_MODEL
+};
+
+static const float layerCustomA[8] = {
+    (float)L0_CUSTOM_A, (float)L1_CUSTOM_A, (float)L2_CUSTOM_A,
+    (float)L3_CUSTOM_A, (float)L4_CUSTOM_A, (float)L5_CUSTOM_A,
+    (float)L6_CUSTOM_A, (float)L7_CUSTOM_A
+};
+
+static const float3 layerCustomB[8] = {
+    (float3)L0_CUSTOM_B, (float3)L1_CUSTOM_B, (float3)L2_CUSTOM_B,
+    (float3)L3_CUSTOM_B, (float3)L4_CUSTOM_B, (float3)L5_CUSTOM_B,
+    (float3)L6_CUSTOM_B, (float3)L7_CUSTOM_B
+};
+
+static const float layerEmissiveIntensity[8] = {
+    (float)L0_EMISSIVE_INTENSITY, (float)L1_EMISSIVE_INTENSITY, (float)L2_EMISSIVE_INTENSITY,
+    (float)L3_EMISSIVE_INTENSITY, (float)L4_EMISSIVE_INTENSITY, (float)L5_EMISSIVE_INTENSITY,
+    (float)L6_EMISSIVE_INTENSITY, (float)L7_EMISSIVE_INTENSITY
+};
+
+// ==================== Vertex Shader ====================
+
+void MaterialVS(
+    in  float4 Position  : POSITION,
+    in  float3 Normal    : NORMAL,
+    in  float2 Texcoord  : TEXCOORD0,
+    out float3 oNormal   : TEXCOORD0,
+    out float2 oTexcoord : TEXCOORD1,
+    out float4 oWorldPos : TEXCOORD3,
+    out float4 oPosition : POSITION)
+{
+    oNormal   = Normal;
+    oTexcoord = Texcoord;
+    oPosition = mul(Position, matWorldViewProject);
+    oWorldPos = float4(Position.xyz, oPosition.w);
+}
+
+// ==================== Compositor Shared Logic ====================
+// Blend processing shared between opaque and alpha passes
+
+MaterialParam CompositeLayersMasked(float3 normal, float2 coord, float4 worldPos)
+{
+    normal = normalize(normal);
+
+    // --- Model texture ---
+    float3 baseTexColor;
+    if (use_texture)
+        baseTexColor = srgb2linear(tex2D(DiffuseMapSamp, coord).rgb * MaterialDiffuse.rgb);
+    else
+        baseTexColor = srgb2linear(MaterialDiffuse.rgb);
+
+    // --- Mask sampling ---
+    float m1 = 0, m2 = 0, m3 = 0, m4 = 0, m5 = 0, m6 = 0, m7 = 0;
+
+    #if MASK_PACKING == 0
+        // Individual grayscale masks
+        #if LAYER_COUNT > 1
+            m1 = tex2D(MaskSamp1, coord).r;
+        #endif
+        #if LAYER_COUNT > 2
+            m2 = tex2D(MaskSamp2, coord).r;
+        #endif
+        #if LAYER_COUNT > 3
+            m3 = tex2D(MaskSamp3, coord).r;
+        #endif
+        #if LAYER_COUNT > 4
+            m4 = tex2D(MaskSamp4, coord).r;
+        #endif
+        #if LAYER_COUNT > 5
+            m5 = tex2D(MaskSamp5, coord).r;
+        #endif
+        #if LAYER_COUNT > 6
+            m6 = tex2D(MaskSamp6, coord).r;
+        #endif
+        #if LAYER_COUNT > 7
+            m7 = tex2D(MaskSamp7, coord).r;
+        #endif
+    #else
+        // RGBA packed masks
+        #if LAYER_COUNT > 1
+            float4 maskA = tex2D(MaskPackedSampA, coord);
+            m1 = maskA.r;
+            #if LAYER_COUNT > 2
+                m2 = maskA.g;
+            #endif
+            #if LAYER_COUNT > 3
+                m3 = maskA.b;
+            #endif
+            #if LAYER_COUNT > 4
+                m4 = maskA.a;
+            #endif
+        #endif
+        #if LAYER_COUNT > 5
+            float4 maskB = tex2D(MaskPackedSampB, coord);
+            m5 = maskB.r;
+            #if LAYER_COUNT > 6
+                m6 = maskB.g;
+            #endif
+            #if LAYER_COUNT > 7
+                m7 = maskB.b;
+            #endif
+        #endif
+    #endif
+
+    // --- Weight calculation ---
+    float maskSum = m1 + m2 + m3 + m4 + m5 + m6 + m7;
+    float w0 = max(0.0, 1.0 - maskSum);
+    float totalW = max(w0 + maskSum, 0.001);
+
+    w0 /= totalW;
+    float w1 = m1 / totalW;
+    float w2 = m2 / totalW;
+    float w3 = m3 / totalW;
+    float w4 = m4 / totalW;
+    float w5 = m5 / totalW;
+    float w6 = m6 / totalW;
+    float w7 = m7 / totalW;
+
+    // --- Dominant layer (for non-blendable attributes) ---
+    int dominantLayer = 0;
+    float maxW = w0;
+
+    #if LAYER_COUNT > 1
+        if (w1 > maxW) { maxW = w1; dominantLayer = 1; }
+    #endif
+    #if LAYER_COUNT > 2
+        if (w2 > maxW) { maxW = w2; dominantLayer = 2; }
+    #endif
+    #if LAYER_COUNT > 3
+        if (w3 > maxW) { maxW = w3; dominantLayer = 3; }
+    #endif
+    #if LAYER_COUNT > 4
+        if (w4 > maxW) { maxW = w4; dominantLayer = 4; }
+    #endif
+    #if LAYER_COUNT > 5
+        if (w5 > maxW) { maxW = w5; dominantLayer = 5; }
+    #endif
+    #if LAYER_COUNT > 6
+        if (w6 > maxW) { maxW = w6; dominantLayer = 6; }
+    #endif
+    #if LAYER_COUNT > 7
+        if (w7 > maxW) { maxW = w7; dominantLayer = 7; }
+    #endif
+
+    // --- Albedo blend ---
+    float3 blendedAlbedo = w0 * APPLY_ALBEDO_SUB(0, CALC_LAYER_ALBEDO(0, baseTexColor));
+    #if LAYER_COUNT > 1
+        blendedAlbedo += w1 * APPLY_ALBEDO_SUB(1, CALC_LAYER_ALBEDO(1, baseTexColor));
+    #endif
+    #if LAYER_COUNT > 2
+        blendedAlbedo += w2 * APPLY_ALBEDO_SUB(2, CALC_LAYER_ALBEDO(2, baseTexColor));
+    #endif
+    #if LAYER_COUNT > 3
+        blendedAlbedo += w3 * APPLY_ALBEDO_SUB(3, CALC_LAYER_ALBEDO(3, baseTexColor));
+    #endif
+    #if LAYER_COUNT > 4
+        blendedAlbedo += w4 * APPLY_ALBEDO_SUB(4, CALC_LAYER_ALBEDO(4, baseTexColor));
+    #endif
+    #if LAYER_COUNT > 5
+        blendedAlbedo += w5 * APPLY_ALBEDO_SUB(5, CALC_LAYER_ALBEDO(5, baseTexColor));
+    #endif
+    #if LAYER_COUNT > 6
+        blendedAlbedo += w6 * APPLY_ALBEDO_SUB(6, CALC_LAYER_ALBEDO(6, baseTexColor));
+    #endif
+    #if LAYER_COUNT > 7
+        blendedAlbedo += w7 * APPLY_ALBEDO_SUB(7, CALC_LAYER_ALBEDO(7, baseTexColor));
+    #endif
+
+    // --- Smoothness blend ---
+    float blendedSmoothness = w0 * CALC_LAYER_SMOOTHNESS(0);
+    #if LAYER_COUNT > 1
+        blendedSmoothness += w1 * CALC_LAYER_SMOOTHNESS(1);
+    #endif
+    #if LAYER_COUNT > 2
+        blendedSmoothness += w2 * CALC_LAYER_SMOOTHNESS(2);
+    #endif
+    #if LAYER_COUNT > 3
+        blendedSmoothness += w3 * CALC_LAYER_SMOOTHNESS(3);
+    #endif
+    #if LAYER_COUNT > 4
+        blendedSmoothness += w4 * CALC_LAYER_SMOOTHNESS(4);
+    #endif
+    #if LAYER_COUNT > 5
+        blendedSmoothness += w5 * CALC_LAYER_SMOOTHNESS(5);
+    #endif
+    #if LAYER_COUNT > 6
+        blendedSmoothness += w6 * CALC_LAYER_SMOOTHNESS(6);
+    #endif
+    #if LAYER_COUNT > 7
+        blendedSmoothness += w7 * CALC_LAYER_SMOOTHNESS(7);
+    #endif
+
+    // --- Metalness blend ---
+    float blendedMetalness = w0 * CALC_LAYER_METALNESS(0);
+    #if LAYER_COUNT > 1
+        blendedMetalness += w1 * CALC_LAYER_METALNESS(1);
+    #endif
+    #if LAYER_COUNT > 2
+        blendedMetalness += w2 * CALC_LAYER_METALNESS(2);
+    #endif
+    #if LAYER_COUNT > 3
+        blendedMetalness += w3 * CALC_LAYER_METALNESS(3);
+    #endif
+    #if LAYER_COUNT > 4
+        blendedMetalness += w4 * CALC_LAYER_METALNESS(4);
+    #endif
+    #if LAYER_COUNT > 5
+        blendedMetalness += w5 * CALC_LAYER_METALNESS(5);
+    #endif
+    #if LAYER_COUNT > 6
+        blendedMetalness += w6 * CALC_LAYER_METALNESS(6);
+    #endif
+    #if LAYER_COUNT > 7
+        blendedMetalness += w7 * CALC_LAYER_METALNESS(7);
+    #endif
+
+    // --- Specular blend ---
+    float blendedSpecular = w0 * CALC_LAYER_SPECULAR(0);
+    #if LAYER_COUNT > 1
+        blendedSpecular += w1 * CALC_LAYER_SPECULAR(1);
+    #endif
+    #if LAYER_COUNT > 2
+        blendedSpecular += w2 * CALC_LAYER_SPECULAR(2);
+    #endif
+    #if LAYER_COUNT > 3
+        blendedSpecular += w3 * CALC_LAYER_SPECULAR(3);
+    #endif
+    #if LAYER_COUNT > 4
+        blendedSpecular += w4 * CALC_LAYER_SPECULAR(4);
+    #endif
+    #if LAYER_COUNT > 5
+        blendedSpecular += w5 * CALC_LAYER_SPECULAR(5);
+    #endif
+    #if LAYER_COUNT > 6
+        blendedSpecular += w6 * CALC_LAYER_SPECULAR(6);
+    #endif
+    #if LAYER_COUNT > 7
+        blendedSpecular += w7 * CALC_LAYER_SPECULAR(7);
+    #endif
+
+    // --- Occlusion blend ---
+    float blendedOcclusion = w0 * CALC_LAYER_OCCLUSION(0);
+    #if LAYER_COUNT > 1
+        blendedOcclusion += w1 * CALC_LAYER_OCCLUSION(1);
+    #endif
+    #if LAYER_COUNT > 2
+        blendedOcclusion += w2 * CALC_LAYER_OCCLUSION(2);
+    #endif
+    #if LAYER_COUNT > 3
+        blendedOcclusion += w3 * CALC_LAYER_OCCLUSION(3);
+    #endif
+    #if LAYER_COUNT > 4
+        blendedOcclusion += w4 * CALC_LAYER_OCCLUSION(4);
+    #endif
+    #if LAYER_COUNT > 5
+        blendedOcclusion += w5 * CALC_LAYER_OCCLUSION(5);
+    #endif
+    #if LAYER_COUNT > 6
+        blendedOcclusion += w6 * CALC_LAYER_OCCLUSION(6);
+    #endif
+    #if LAYER_COUNT > 7
+        blendedOcclusion += w7 * CALC_LAYER_OCCLUSION(7);
+    #endif
+
+    // --- Emissive blend ---
+    float3 blendedEmissive = w0 * CALC_LAYER_EMISSIVE(0);
+    #if LAYER_COUNT > 1
+        blendedEmissive += w1 * CALC_LAYER_EMISSIVE(1);
+    #endif
+    #if LAYER_COUNT > 2
+        blendedEmissive += w2 * CALC_LAYER_EMISSIVE(2);
+    #endif
+    #if LAYER_COUNT > 3
+        blendedEmissive += w3 * CALC_LAYER_EMISSIVE(3);
+    #endif
+    #if LAYER_COUNT > 4
+        blendedEmissive += w4 * CALC_LAYER_EMISSIVE(4);
+    #endif
+    #if LAYER_COUNT > 5
+        blendedEmissive += w5 * CALC_LAYER_EMISSIVE(5);
+    #endif
+    #if LAYER_COUNT > 6
+        blendedEmissive += w6 * CALC_LAYER_EMISSIVE(6);
+    #endif
+    #if LAYER_COUNT > 7
+        blendedEmissive += w7 * CALC_LAYER_EMISSIVE(7);
+    #endif
+
+    // --- Emissive intensity blend ---
+    float blendedEmissiveIntensity =
+        w0 * layerEmissiveIntensity[0]
+    #if LAYER_COUNT > 1
+      + w1 * layerEmissiveIntensity[1]
+    #endif
+    #if LAYER_COUNT > 2
+      + w2 * layerEmissiveIntensity[2]
+    #endif
+    #if LAYER_COUNT > 3
+      + w3 * layerEmissiveIntensity[3]
+    #endif
+    #if LAYER_COUNT > 4
+      + w4 * layerEmissiveIntensity[4]
+    #endif
+    #if LAYER_COUNT > 5
+      + w5 * layerEmissiveIntensity[5]
+    #endif
+    #if LAYER_COUNT > 6
+      + w6 * layerEmissiveIntensity[6]
+    #endif
+    #if LAYER_COUNT > 7
+      + w7 * layerEmissiveIntensity[7]
+    #endif
+    ;
+
+    // --- Normal blend ---
+    // Weighted blend of each layer's tangent-space normal
+    float3 blendedNormal;
+
+#if _ANY_NORMAL_MAP
+    float3 blendedTangentNormal = w0 * CALC_LAYER_TANGENT_NORMAL(0);
+    #if LAYER_COUNT > 1
+        blendedTangentNormal += w1 * CALC_LAYER_TANGENT_NORMAL(1);
+    #endif
+    #if LAYER_COUNT > 2
+        blendedTangentNormal += w2 * CALC_LAYER_TANGENT_NORMAL(2);
+    #endif
+    #if LAYER_COUNT > 3
+        blendedTangentNormal += w3 * CALC_LAYER_TANGENT_NORMAL(3);
+    #endif
+    #if LAYER_COUNT > 4
+        blendedTangentNormal += w4 * CALC_LAYER_TANGENT_NORMAL(4);
+    #endif
+    #if LAYER_COUNT > 5
+        blendedTangentNormal += w5 * CALC_LAYER_TANGENT_NORMAL(5);
+    #endif
+    #if LAYER_COUNT > 6
+        blendedTangentNormal += w6 * CALC_LAYER_TANGENT_NORMAL(6);
+    #endif
+    #if LAYER_COUNT > 7
+        blendedTangentNormal += w7 * CALC_LAYER_TANGENT_NORMAL(7);
+    #endif
+
+    blendedTangentNormal = normalize(blendedTangentNormal);
+    blendedNormal = ComputeTangentBinormalNormal(normal, worldPos.xyz, coord, blendedTangentNormal);
+#else
+    blendedNormal = normal;
+#endif
+
+    // --- Build material ---
+    MaterialParam material;
+    material.albedo            = saturate(blendedAlbedo);
+    material.normal            = blendedNormal;
+    material.smoothness        = saturate(blendedSmoothness);
+    material.metalness         = saturate(blendedMetalness);
+    material.specular          = saturate(0.08 * blendedSpecular);
+    material.emissive          = blendedEmissive;
+    material.emissiveIntensity = blendedEmissiveIntensity;
+    material.visibility        = saturate(blendedOcclusion);
+    material.alpha             = 1.0;
+
+    // Non-blendable attributes: take from dominant (max weight) layer
+    material.customDataA = layerCustomA[dominantLayer];
+    material.customDataB = layerCustomB[dominantLayer];
+
+    // Determine shading model
+    if (any(saturate(material.emissive - EMISSIVE_EPSILON)))
+        material.lightModel = SHADINGMODELID_EMISSIVE;
+    else
+        material.lightModel = layerShadingModel[dominantLayer];
+
+    return material;
+}
+
+// ==================== Pixel Shader (Opaque) ====================
+
+GbufferParam CompositorPS(
+    in float3 normal   : TEXCOORD0,
+    in float2 coord    : TEXCOORD1,
+    in float4 worldPos : TEXCOORD3)
+{
+    float alpha = GetAlpha(coord);
+    clip(alpha - ALPHA_THRESHOLD);
+
+    MaterialParam material = CompositeLayersMasked(normal, coord, worldPos);
+    return EncodeGbufferMasked(material, worldPos.w);
+}
+
+// ==================== Pixel Shader (Alpha) ====================
+
+GbufferParam CompositorAlphaPS(
+    in float3 normal   : TEXCOORD0,
+    in float2 coord    : TEXCOORD1,
+    in float4 worldPos : TEXCOORD3)
+{
+    float alpha = GetAlpha(coord);
+    clip(alpha - 0.01);
+
+    MaterialParam material = CompositeLayersMasked(normal, coord, worldPos);
+    material.alpha = (alpha > ALPHA_THRESHOLD) ? 0 : alpha;
+
+    return EncodeGbufferMasked(material, worldPos.w);
+}
+
+// ==================== Techniques ====================
+
+#define OBJECT_TEC(name, mmdpass) \
+    technique name < string MMDPass = mmdpass; \
+    string Script = \
+        "RenderColorTarget0=;" \
+        "RenderColorTarget1=Gbuffer2RT;" \
+        "RenderColorTarget2=Gbuffer3RT;" \
+        "RenderColorTarget3=Gbuffer4RT;" \
+        "Pass=DrawObject;" \
+        "RenderColorTarget0=Gbuffer5RT;" \
+        "RenderColorTarget1=Gbuffer6RT;" \
+        "RenderColorTarget2=Gbuffer7RT;" \
+        "RenderColorTarget3=Gbuffer8RT;" \
+        "Pass=DrawAlphaObject;" \
+    ; > { \
+        pass DrawObject { \
+            AlphaTestEnable = false; AlphaBlendEnable = false; \
+            VertexShader = compile vs_3_0 MaterialVS(); \
+            PixelShader  = compile ps_3_0 CompositorPS(); \
+        } \
+        pass DrawAlphaObject { \
+            AlphaTestEnable = false; AlphaBlendEnable = false; \
+            VertexShader = compile vs_3_0 MaterialVS(); \
+            PixelShader  = compile ps_3_0 CompositorAlphaPS(); \
+        } \
+    }
+
+OBJECT_TEC(MainTec0, "object")
+OBJECT_TEC(MainTecBS0, "object_ss")
+
+technique EdgeTec   < string MMDPass = "edge"; > {}
+technique ShadowTech < string MMDPass = "shadow"; > {}
+technique ZplotTec  < string MMDPass = "zplot"; > {}

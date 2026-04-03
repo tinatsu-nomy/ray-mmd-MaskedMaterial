@@ -1,0 +1,524 @@
+# MaskedMaterial - ビットマップマスクによるマルチレイヤーマテリアル
+
+ray-mmd 互換のマテリアルエフェクトです。  
+1つのサブセット（材質）に対して、**ビットマップマスクで最大6種類のマテリアルを重ね合わせ**できます。  
+各レイヤーに**個別のテクスチャマップ**（法線、スムースネス等）を割り当てることも可能です。
+
+---
+
+## 目次
+
+1. [概要](#概要)
+2. [ファイル構成](#ファイル構成)
+3. [クイックスタート](#クイックスタート)
+4. [レイヤー構造](#レイヤー構造)
+5. [マスク画像の仕様](#マスク画像の仕様)
+6. [パラメータリファレンス](#パラメータリファレンス)
+7. [テクスチャマップリファレンス](#テクスチャマップリファレンス)
+8. [既存マテリアルからの移行](#既存マテリアルからの移行)
+9. [シェーディングモデル](#シェーディングモデル)
+10. [サンプラー予算](#サンプラー予算)
+11. [制約事項](#制約事項)
+12. [トラブルシューティング](#トラブルシューティング)
+
+---
+
+## 概要
+
+### 従来の制約
+
+ray-mmd の標準マテリアルシステムでは、**1つのサブセット = 1つのマテリアル** という制約があります。  
+異なる部分に異なるマテリアルを割り当てるには、PMXエディタで材質を分割する必要がありました。
+
+### MaskedMaterial の解決策
+
+MaskedMaterial では、グレースケールのマスク画像を使って、**1つのサブセット内でピクセル単位のマテリアル合成**を行います。
+
+- **最大6レイヤー**のマテリアルを重ね合わせ
+- 各レイヤーに**個別の外部テクスチャマップ**を指定可能（法線、スムースネス、エミッシブ等）
+- グレースケールマスクで**境界のぼかし**にも対応
+- 使わないレイヤー・テクスチャは**サンプラーを消費しない**
+
+---
+
+## ファイル構成
+
+```
+MaskedMaterial/
+├── masked_material.fx          ← ユーザー設定テンプレート
+├── masked_material_common.fxsub ← コアシェーダ（編集不要）
+├── masks/                      ← マスク画像を配置
+│   ├── mask_1.png
+│   ├── mask_2.png
+│   └── ...
+├── textures/                   ← レイヤー別テクスチャを配置
+│   ├── L0_normal.png
+│   ├── L1_smoothness.png
+│   └── ...
+└── README.md
+```
+
+---
+
+## クイックスタート
+
+### Step 1: マスク画像を準備
+
+UV展開に合わせた 8bit グレースケール PNG を `masks/` フォルダに配置。
+
+### Step 2: masked_material.fx を編集
+
+```hlsl
+#define LAYER_COUNT 3
+
+// マスクファイル
+#define MASK_1_FILE "masks/skin.png"
+#define MASK_2_FILE "masks/metal.png"
+
+// Layer 0: ベース（マスク残り領域）
+#define L0_ALBEDO      float3(1, 1, 1)
+#define L0_SMOOTHNESS  0.0
+
+// Layer 1: 肌（法線マップ付き）
+#define L1_ALBEDO            float3(1.0, 0.95, 0.9)
+#define L1_SMOOTHNESS        0.3
+#define L1_SHADING_MODEL     1
+#define L1_NORMAL_MAP_FROM   1
+#define L1_NORMAL_MAP_FILE   "textures/skin_normal.png"
+#define L1_NORMAL_SUB_MAP_FROM 1
+#define L1_NORMAL_SUB_MAP_FILE "textures/skin_detail.png"
+
+// Layer 2: 金属（専用アルベドテクスチャ）
+#define L2_ALBEDO_MAP_FROM   1
+#define L2_ALBEDO_MAP_FILE   "textures/metal_albedo.png"
+#define L2_ALBEDO            float3(1, 1, 1)
+#define L2_ALBEDO_APPLY_DIFFUSE 0
+#define L2_SMOOTHNESS        0.85
+#define L2_METALNESS         1.0
+
+#include "masked_material_common.fxsub"
+```
+
+### Step 3: MME で割り当て
+
+MME でこの .fx ファイルを対象サブセットに割り当てます。
+
+---
+
+## レイヤー構造
+
+| レイヤー | マスク | 説明 |
+|:--------:|:------:|:-----|
+| Layer 0 | 不要 | ベース。他レイヤーが塗られていない部分に自動表示 |
+| Layer 1 | mask_1.png | オーバーレイ |
+| Layer 2 | mask_2.png | オーバーレイ |
+| Layer 3 | mask_3.png | オーバーレイ |
+| Layer 4 | mask_4.png | オーバーレイ |
+| Layer 5 | mask_5.png | オーバーレイ |
+
+Layer 0 の重みは `w0 = max(0, 1 - Σマスク値)` で自動計算されます。
+
+---
+
+## マスク画像の仕様
+
+| 項目 | 仕様 |
+|:-----|:-----|
+| 形式 | 8bit グレースケール PNG |
+| 解像度 | モデルテクスチャと同じ推奨 |
+| UV座標 | モデルのUV展開と一致 |
+| 白 (255) | そのレイヤーを完全に表示 |
+| 黒 (0) | そのレイヤーを非表示 |
+| 中間値 | ブレンド比率（境界のぼかし等） |
+
+---
+
+## パラメータリファレンス
+
+### 基本パラメータ（各レイヤー共通）
+
+`L{N}_` プレフィクス付き。N = 0～5。
+
+| パラメータ | 型 | デフォルト | 説明 |
+|:-----------|:---|:-----------|:-----|
+| `ALBEDO` | float3 | (1,1,1) | アルベドカラー / ティント |
+| `ALBEDO_MAP_FROM` | int | 0 | 0=定数, 1=外部ファイル |
+| `ALBEDO_MAP_FILE` | string | - | アルベドテクスチャパス |
+| `ALBEDO_APPLY_DIFFUSE` | int | 1 | 1=モデルテクスチャ(MaterialDiffuse)を乗算 |
+| `SMOOTHNESS` | float | 0.0 | スムースネス値 (定数 / テクスチャ不使用時) |
+| `METALNESS` | float | 0.0 | メタルネス値 |
+| `SPECULAR` | float | 0.5 | スペキュラ強度 (×0.08 → F0) |
+| `SHADING_MODEL` | int | 0 | シェーディングモデルID |
+| `EMISSIVE` | float3 | (0,0,0) | エミッシブカラー |
+| `EMISSIVE_INTENSITY` | float | 0.0 | エミッシブ強度 |
+| `CUSTOM_A` | float | 0.0 | カスタムデータA |
+| `CUSTOM_B` | float3 | (0,0,0) | カスタムデータB |
+
+---
+
+## テクスチャマップリファレンス
+
+各レイヤーに以下のテクスチャマップを個別指定できます。  
+`_MAP_FROM = 0`（デフォルト）で無効、`= 1` で外部ファイルを読み込みます。
+
+### ALBEDO_MAP（アルベドマップ）
+
+| パラメータ | デフォルト | 説明 |
+|:-----------|:-----------|:-----|
+| `L{N}_ALBEDO_MAP_FROM` | 0 | 0=無効, 1=外部ファイル |
+| `L{N}_ALBEDO_MAP_FILE` | - | テクスチャファイルパス |
+| `L{N}_ALBEDO_APPLY_DIFFUSE` | 1 | FROM=0時: 1でモデルテクスチャ乗算 |
+
+FROM=1 の場合、テクスチャ × `L{N}_ALBEDO` (ティント) として使用。
+
+### ALBEDO_SUB_MAP（サブアルベドマップ）
+
+| パラメータ | デフォルト | 説明 |
+|:-----------|:-----------|:-----|
+| `L{N}_ALBEDO_SUB_MAP_FROM` | 0 | 0=無効, 1=外部ファイル |
+| `L{N}_ALBEDO_SUB_MAP_FILE` | - | テクスチャファイルパス |
+| `L{N}_ALBEDO_SUB_ENABLE` | 1 | 合成モード: 1=乗算, 2=べき乗, 3=加算, 5=αブレンド |
+
+アルベドに対して追加の質感（メラニン、汚れ等）を合成します。
+
+### NORMAL_MAP（法線マップ）
+
+| パラメータ | デフォルト | 説明 |
+|:-----------|:-----------|:-----|
+| `L{N}_NORMAL_MAP_FROM` | 0 | 0=無効, 1=外部ファイル |
+| `L{N}_NORMAL_MAP_FILE` | - | テクスチャファイルパス |
+| `L{N}_NORMAL_MAP_TYPE` | 0 | 0=RGB法線, 1=RG圧縮 |
+| `L{N}_NORMAL_MAP_SCALE` | 1.0 | 法線強度 |
+| `L{N}_NORMAL_MAP_LOOP` | 1.0 | UVリピート数 |
+
+### NORMAL_SUB_MAP（サブ法線マップ）
+
+| パラメータ | デフォルト | 説明 |
+|:-----------|:-----------|:-----|
+| `L{N}_NORMAL_SUB_MAP_FROM` | 0 | 0=無効, 1=外部ファイル |
+| `L{N}_NORMAL_SUB_MAP_FILE` | - | テクスチャファイルパス |
+| `L{N}_NORMAL_SUB_MAP_TYPE` | 0 | 0=RGB法線, 1=RG圧縮 |
+| `L{N}_NORMAL_SUB_MAP_SCALE` | 1.0 | 法線強度 |
+| `L{N}_NORMAL_SUB_MAP_LOOP` | 1.0 | UVリピート数 |
+
+NORMAL_MAP と NORMAL_SUB_MAP の両方が有効な場合、RNM (Reoriented Normal Mapping) で合成されます。  
+レイヤー間の法線は重み付き線形補間 → `normalize()` でブレンドされます。
+
+### SMOOTHNESS_MAP（スムースネスマップ）
+
+| パラメータ | デフォルト | 説明 |
+|:-----------|:-----------|:-----|
+| `L{N}_SMOOTHNESS_MAP_FROM` | 0 | 0=無効, 1=外部ファイル |
+| `L{N}_SMOOTHNESS_MAP_FILE` | - | テクスチャファイルパス |
+| `L{N}_SMOOTHNESS_MAP_SWIZZLE` | 0 | 0=R, 1=G, 2=B, 3=A |
+| `L{N}_SMOOTHNESS_MAP_TYPE` | 0 | 0=Smoothness値, 1=Roughness値(反転) |
+| `L{N}_SMOOTHNESS_MAP_LOOP` | 1.0 | UVリピート数 |
+
+FROM=1 の場合、テクスチャの値がそのまま使用されます（`L{N}_SMOOTHNESS` 定数は無視）。
+
+### METALNESS_MAP / SPECULAR_MAP
+
+| パラメータ | デフォルト | 説明 |
+|:-----------|:-----------|:-----|
+| `L{N}_{MAP}_MAP_FROM` | 0 | 0=無効, 1=外部ファイル |
+| `L{N}_{MAP}_MAP_FILE` | - | テクスチャファイルパス |
+| `L{N}_{MAP}_MAP_SWIZZLE` | 0 | 0=R, 1=G, 2=B, 3=A |
+| `L{N}_{MAP}_MAP_LOOP` | 1.0 | UVリピート数 |
+
+### OCCLUSION_MAP（オクルージョンマップ）
+
+| パラメータ | デフォルト | 説明 |
+|:-----------|:-----------|:-----|
+| `L{N}_OCCLUSION_MAP_FROM` | 0 | 0=無効, 1=外部ファイル |
+| `L{N}_OCCLUSION_MAP_FILE` | - | テクスチャファイルパス |
+| `L{N}_OCCLUSION_MAP_SWIZZLE` | 0 | 0=R, 1=G, 2=B, 3=A |
+| `L{N}_OCCLUSION_MAP_LOOP` | 1.0 | UVリピート数 |
+
+ray-mmd の `material.visibility` にマッピングされます。FROM=0 の場合、オクルージョン = 1.0（遮蔽なし）。
+
+### EMISSIVE_MAP（エミッシブマップ）
+
+| パラメータ | デフォルト | 説明 |
+|:-----------|:-----------|:-----|
+| `L{N}_EMISSIVE_MAP_FROM` | 0 | 0=無効, 1=外部ファイル |
+| `L{N}_EMISSIVE_MAP_FILE` | - | テクスチャファイルパス |
+| `L{N}_EMISSIVE_MAP_LOOP` | 1.0 | UVリピート数 |
+
+FROM=1 の場合、テクスチャ × `L{N}_EMISSIVE` (ティント) として使用。
+
+---
+
+## 既存マテリアルからの移行
+
+### material_2.0.fx の場合
+
+| 旧パラメータ | 新パラメータ |
+|:-------------|:-------------|
+| `const float3 albedo = ...` | `#define L{N}_ALBEDO float3(...)` |
+| `#define ALBEDO_MAP_FROM 1` | `#define L{N}_ALBEDO_MAP_FROM 1` |
+| `#define ALBEDO_MAP_FILE "..."` | `#define L{N}_ALBEDO_MAP_FILE "..."` |
+| `const float smoothness = ...` | `#define L{N}_SMOOTHNESS ...` |
+| `#define SMOOTHNESS_MAP_FROM 1` | `#define L{N}_SMOOTHNESS_MAP_FROM 1` |
+| `const float metalness = ...` | `#define L{N}_METALNESS ...` |
+| `#define NORMAL_MAP_FROM 1` | `#define L{N}_NORMAL_MAP_FROM 1` |
+| `#define NORMAL_MAP_FILE "..."` | `#define L{N}_NORMAL_MAP_FILE "..."` |
+| `const float normalMapScale = ...` | `#define L{N}_NORMAL_MAP_SCALE ...` |
+| `#define NORMAL_SUB_MAP_FROM 1` | `#define L{N}_NORMAL_SUB_MAP_FROM 1` |
+| `#define OCCLUSION_MAP_FROM 1` | `#define L{N}_OCCLUSION_MAP_FROM 1` |
+
+### 移行例: Skin マテリアル
+
+旧 (`material_skin.fx`):
+```hlsl
+const float3 albedo = 1.0;
+const float smoothness = 0.5;
+#define NORMAL_SUB_MAP_FROM 1
+#define NORMAL_SUB_MAP_FILE "skin_normal.png"
+const float normalSubMapScale = 1.0;
+#define CUSTOM_ENABLE 1
+const float customA = 0.5;
+const float3 customB = float3(0.9, 0.5, 0.4);
+```
+
+新 (Layer 1 として):
+```hlsl
+#define L1_ALBEDO float3(1.0, 1.0, 1.0)
+#define L1_SMOOTHNESS 0.5
+#define L1_SHADING_MODEL 1
+#define L1_NORMAL_SUB_MAP_FROM 1
+#define L1_NORMAL_SUB_MAP_FILE "textures/skin_normal.png"
+#define L1_NORMAL_SUB_MAP_SCALE 1.0
+#define L1_CUSTOM_A 0.5
+#define L1_CUSTOM_B float3(0.9, 0.5, 0.4)
+```
+
+---
+
+## シェーディングモデル
+
+| ID | 名前 | 用途 | CUSTOM_A | CUSTOM_B |
+|:--:|:-----|:-----|:---------|:---------|
+| 0 | Default | 標準PBR | - | - |
+| 1 | Skin | 皮膚SSS | 曲率 | サブサーフェスカラー |
+| 2 | Emissive | 発光 | - | (自動:emissive色) |
+| 3 | Anisotropy | 異方性 | 角度シフト | - |
+| 4 | Glass | ガラス | - | - |
+| 5 | Cloth | 布 | 光沢 | シーンカラー |
+| 6 | ClearCoat | クリアコート | 滑らかさ | - |
+| 7 | Subsurface | サブサーフェス | 曲率 | サブサーフェスカラー |
+
+EMISSIVE 定数が非ゼロの場合、シェーディングモデルは自動的に Emissive (2) に設定されます。
+
+---
+
+## マスクパッキング
+
+`MASK_PACKING` でマスクの格納方式を切り替えられます。
+
+| 値 | 方式 | 説明 |
+|:--:|:-----|:-----|
+| 0 | 個別グレースケール（デフォルト） | レイヤーごとに1枚の8bitグレースケールPNG |
+| 1 | RGBパッキング | 2枚のRGBテクスチャにチャンネル分離で格納 |
+
+### RGBAパッキングのチャンネル配置
+
+| テクスチャ | R | G | B | A |
+|:-----------|:--|:--|:--|:--|
+| `MASK_PACKED_A_FILE` | mask1 (Layer 1) | mask2 (Layer 2) | mask3 (Layer 3) | mask4 (Layer 4) |
+| `MASK_PACKED_B_FILE` | mask5 (Layer 5) | mask6 (Layer 6) | mask7 (Layer 7) | (未使用) |
+
+- LAYER_COUNT 2～5: Tex A のみ使用（サンプラー1つ）
+- LAYER_COUNT 6～8: Tex A + Tex B 使用（サンプラー2つ）
+- **MASK_PACKING=1 の場合、最大8レイヤーまで拡張可能**
+
+### 使い方
+
+```hlsl
+#define LAYER_COUNT 8
+#define MASK_PACKING 1
+#define MASK_PACKED_A_FILE "masks/mask_packed_a.png"   // RGBA: L1,L2,L3,L4
+#define MASK_PACKED_B_FILE "masks/mask_packed_b.png"   // RGB: L5,L6,L7 (6層以上)
+```
+
+### パッキング画像の作成方法
+
+個別のグレースケールマスク画像からRGBAパッキング画像を作成する方法です。
+
+> **推奨出力形式: Targa（TGA）32bit**  
+> PNG は可逆圧縮ですが、ツール依存で sRGB ガンマ補正や色空間の自動変換が発生し、  
+> マスク値に意図しない誤差が生じる可能性があります。  
+> TGA は非圧縮で値がそのまま保持されるため、Packed Texture には最も安全です。
+
+#### Photoshop
+
+準備: メニューバー →「ウィンドウ」→「レイヤー」/「チャンネル」でパネルを表示。
+
+**RGBチャンネルへの格納:**
+
+1. 各チャンネルに格納するグレースケールマスク画像を別レイヤーとして配置
+2. レイヤーをダブルクリック →「レイヤースタイル」を開く
+3. 「チャンネル」項目で格納先を1つだけチェック:
+   - R だけチェック → Rチャンネルに格納（mask1）
+   - G だけチェック → Gチャンネルに格納（mask2）
+   - B だけチェック → Bチャンネルに格納（mask3）
+
+**Alphaチャンネルへの格納:**
+
+4. RGBチャンネルに格納したレイヤーを一旦非表示にする
+5. Alpha用レイヤーを選択し、`Ctrl+A`（全選択）→ `Ctrl+C`（コピー）
+6. チャンネルパネルの「+」ボタンで「アルファチャンネル1」を追加
+7. 「アルファチャンネル1」を選択し、`Ctrl+Shift+V`（同じ位置にペースト）
+
+**出力:**
+
+8. アルファチャンネルとAlpha用レイヤーを非表示にする
+9. 「ファイル → コピーを保存」→ **Targa（TGA）** → **32bit/pixel** で保存
+
+> 参考: [RGBAチャンネルに別々のテクスチャを格納する方法](https://note.com/natty_violet4982/n/n63c40d27c434) (taka)
+
+#### ImageMagick
+
+**Tex A（RGBA: L1, L2, L3, L4）:**
+```bash
+magick mask_1.png mask_2.png mask_3.png mask_4.png \
+  -channel RGBA -combine mask_packed_a.tga
+```
+
+**Tex B（RGB: L5, L6, L7）:**
+```bash
+magick mask_5.png mask_6.png mask_7.png \
+  -channel RGB -combine mask_packed_b.tga
+```
+
+**レイヤー3つだけの場合（Aチャンネルを黒埋め）:**
+```bash
+magick mask_1.png mask_2.png mask_3.png \
+  ( -clone 0 -evaluate set 0 ) \
+  -channel RGBA -combine mask_packed_a.tga
+```
+
+> `-combine` はグレースケール画像を入力順に R, G, B, A へ割り当てます。  
+> 確認: `magick identify -verbose mask_packed_a.tga` でチャンネル深度を確認できます。
+
+#### Python (Pillow)
+
+```python
+from PIL import Image
+
+r = Image.open("mask_1.png").convert("L")
+g = Image.open("mask_2.png").convert("L")
+b = Image.open("mask_3.png").convert("L")
+a = Image.open("mask_4.png").convert("L")
+Image.merge("RGBA", (r, g, b, a)).save("mask_packed_a.tga")
+```
+
+#### Substance Designer
+
+1. RGBA Merge ノードを使用
+2. 各チャンネル入力にグレースケール画像を接続
+3. Targa 形式で出力
+
+### メリット
+
+- **VRAM削減**: 個別グレースケールはDX9内部で32bit/pixelに変換されるため、パッキングで最大75%削減
+- **サンプラー節約**: マスク用サンプラーが最大7→最大2に（+5枠の余裕）
+- **速度向上**: tex2D呼び出しが最大7→最大2に削減
+- **レイヤー拡張**: 個別モードの最大6→パッキングモードの最大8レイヤー
+
+---
+
+## サンプラー予算
+
+SM3.0 の上限: **16 サンプラー**
+
+### 固定消費
+
+| 用途 | MASK_PACKING=0 | MASK_PACKING=1 |
+|:-----|:--------------:|:--------------:|
+| DiffuseMapSamp | 1 | 1 |
+| マスクテクスチャ | LAYER_COUNT - 1 | 1～2 |
+| **固定合計** | **LAYER_COUNT** | **2～3** |
+
+### レイヤー数別の外部テクスチャ予算
+
+| LAYER_COUNT | 個別 (PACKING=0) | パッキング (PACKING=1) |
+|:-----------:|:----------------:|:---------------------:|
+| 2 | **14** | **14** |
+| 3 | **13** | **14** |
+| 4 | **12** | **14** |
+| 5 | **11** | **14** |
+| 6 | **10** | **13** |
+| 7 | N/A | **13** |
+| 8 | N/A | **13** |
+
+### 外部テクスチャとは
+
+`L{N}_*_MAP_FROM = 1` を指定したマップのみサンプラーを消費します。  
+- `_MAP_FROM = 0` → サンプラー消費なし（定数値使用）
+- `_MAP_FROM = 1` → **1サンプラー消費**
+
+### 構成例 (LAYER_COUNT = 3, 予算13)
+
+| Layer | ALBEDO | NORMAL | N_SUB | SMOOTH | 小計 |
+|:-----:|:------:|:------:|:-----:|:------:|:----:|
+| L0 ベース | `FROM=0` | 1 | - | - | 1 |
+| L1 肌 | `FROM=0` | 1 | 1 | 1 | 3 |
+| L2 金属 | 1 | 1 | - | 1 | 3 |
+| **合計** | | | | | **7/13** ✓ |
+
+---
+
+## 制約事項
+
+1. **ALPHA_MAP / PARALLAX_MAP はレイヤー別指定不可**  
+   - ALPHA: ジオメトリ全体の表示/非表示を制御するため、レイヤー別に分ける意味がない
+   - PARALLAX: UV変位が全テクスチャサンプリングに影響するため、マスクベースの合成と根本的に非互換
+
+2. **`_MAP_FROM` は 0 (無効) と 1 (外部ファイル) のみ**  
+   - ray-mmd 本体の `3`(モデルテクスチャ), `4`(スフィア), `5`(トゥーン) はマスクレイヤーシステムでは非対応
+   - アルベドでモデルテクスチャを使う場合は `ALBEDO_APPLY_DIFFUSE = 1` を使用
+
+3. **非ブレンド属性の境界**  
+   - SHADING_MODEL, CUSTOM_A, CUSTOM_B はブレンドせず、最大重み(dominant)レイヤーの値を使用
+   - マスク境界部分で急な切り替わりが発生する可能性あり
+
+4. **CONTROLOBJECT 非対応**  
+   - ボーン・モーフによるランタイム値変更は非対応
+
+5. **法線マップの TYPE 制限**  
+   - レイヤー別法線マップは TYPE 0 (RGB) と TYPE 1 (RG圧縮) のみ対応
+   - TYPE 2 (グレースケール低品質) と TYPE 3 (グレースケール高品質) は非対応
+
+---
+
+## トラブルシューティング
+
+### マスクが反映されない
+
+- マスク画像がグレースケールか確認（RGB画像だと R チャンネルのみ使用）
+- ファイルパスの大文字小文字を確認
+- `LAYER_COUNT` がマスク数+1以上か確認
+
+### 真っ黒になる
+
+- `L{N}_ALBEDO` が `float3(0,0,0)` になっていないか確認
+- アルベドテクスチャのパスが正しいか確認
+- `ALBEDO_APPLY_DIFFUSE = 0` で定数カラーのみの場合、`ALBEDO` に適切な色を設定
+
+### テクスチャが読み込まれない
+
+- `_MAP_FROM = 1` が設定されているか確認
+- ファイルパスが正しいか確認（.fx からの相対パス）
+- SM3.0 サンプラー上限（16）を超えていないか確認
+
+### コンパイルエラー
+
+- `LAYER_COUNT` が 2～6（MASK_PACKING=0）または 2～8（MASK_PACKING=1）の範囲か確認
+- `#define` の末尾にセミコロンがないか確認
+- `float3(...)` の括弧が正しいか確認
+- ファイルパスのダブルクォーテーション `"` が閉じているか確認（`error X1005: string continues past end of line` の原因）
+
+### 法線マップの境界が不自然
+
+- マスク画像の境界にぼかし（グラデーション）を入れる
+- 法線はタンジェント空間で重み付き線形補間されるため、急なマスク変化は段差になりやすい
