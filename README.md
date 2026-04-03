@@ -106,9 +106,30 @@ UV展開に合わせた 8bit グレースケール PNG を `masks/` フォルダ
 #include "masked_material_common.fxsub"
 ```
 
-### Step 3: MME で割り当て
+### Step 3: MME で MaterialMap タブに割り当て
 
-MME でこの .fx ファイルを対象サブセットに割り当てます。
+MaskedMaterial は ray-mmd の **MaterialMap** パスに割り当てます。
+
+1. MMD メニューバー →「MMEffect」→「エフェクト割当」を開く
+2. **「MaterialMap」タブ** を選択（※「Main」タブではない）
+3. 対象モデルのツリーを展開し、適用したいサブセット（材質）を選択
+4. 「ファイル選択」ボタンで `masked_material.fx` を指定
+5. 必要に応じて「Main」タブにも `main.fx`（または適切なバリエーション）を割り当て
+
+```
+エフェクト割当画面:
+┌─ Main ─┬─ MaterialMap ─┬─ Edge ─┬─ Shadow ─┐
+│        │  ← ここ       │        │          │
+├────────┴───────────────┴────────┴──────────┤
+│ モデル名                                    │
+│  ├ サブセット0: (none)                      │
+│  ├ サブセット1: masked_material.fx  ← 割当  │
+│  └ サブセット2: (none)                      │
+└─────────────────────────────────────────────┘
+```
+
+> **注意**: `masked_material.fx` は必ず **MaterialMap タブ** に割り当ててください。  
+> Main タブに割り当てると G-Buffer への書き込みが行われず、マテリアルが反映されません。
 
 ---
 
