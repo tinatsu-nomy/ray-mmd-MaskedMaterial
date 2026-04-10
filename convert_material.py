@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-ray-mmd material_2.0.fx → MaskedMaterial レイヤー変換スクリプト
+ray-mmd material_2.0.fx -> MaskedMaterial layer conversion script
 
-使い方:
-    python convert_material.py <入力.fx> [--layer N] [--shading-model ID]
+Usage:
+    python convert_material.py <input.fx> [--layer N] [--shading-model ID]
 
-例:
+Examples:
     python convert_material.py material_skin.fx --layer 1 --shading-model 1
     python convert_material.py material_body.fx --layer 0
     python convert_material.py material_metal.fx -l 2 -s 0
 
-オプション:
-    --layer, -l        出力レイヤー番号 (0-7, デフォルト: 0)
-    --shading-model, -s  シェーディングモデルID (デフォルト: 自動検出)
+Options:
+    --layer, -l        Output layer number (0-7, default: 0)
+    --shading-model, -s  Shading model ID (default: auto-detect)
                          0=Default, 1=Skin, 2=Emissive, 3=Anisotropy,
                          4=Glass, 5=Cloth, 6=ClearCoat, 7=Subsurface
-    --output, -o       出力ファイルパス (デフォルト: 標準出力)
+    --output, -o       Output file path (default: stdout)
 """
 
 import re
@@ -26,25 +26,24 @@ from pathlib import Path
 
 
 # ============================================================
-# パーサー
+# Parser
 # ============================================================
 
 def parse_material_fx(text: str) -> dict:
-    """material_2.0.fx 形式のテキストを解析し、パラメータ辞書を返す。"""
+    """Parse material_2.0.fx format text and return a parameter dictionary."""
     params = {}
 
-    # #define マクロ を解析
+    # Parse #define macros
     for m in re.finditer(
         r'^\s*#define\s+(\w+)\s+(.+?)(?:\s*//.*)?$', text, re.MULTILINE
     ):
         key, val = m.group(1), m.group(2).strip()
-        # 文字列リテラル
         if val.startswith('"'):
             params[key] = val
         else:
             params[key] = val
 
-    # const 変数を解析
+    # Parse const variables
     for m in re.finditer(
         r'^\s*(?:static\s+)?const\s+(\w+)\s+(\w+)\s*=\s*(.+?)\s*;',
         text, re.MULTILINE
@@ -52,7 +51,7 @@ def parse_material_fx(text: str) -> dict:
         ctype, name, val = m.group(1), m.group(2), m.group(3).strip()
         params[f'_const_{name}'] = (ctype, val)
 
-    # SSS_SKIN_TRANSMITTANCE マクロ定義を検出
+    # Detect SSS_SKIN_TRANSMITTANCE macro definition
     m = re.search(
         r'#define\s+SSS_SKIN_TRANSMITTANCE\((\w+)\)\s+(.+?)$',
         text, re.MULTILINE
@@ -60,7 +59,7 @@ def parse_material_fx(text: str) -> dict:
     if m:
         params['_has_sss_macro'] = True
 
-    # #include パスを検出 (shading model の手がかり)
+    # Detect #include path (hint for shading model)
     m = re.search(r'#include\s+"([^"]+)"', text)
     if m:
         params['_include_path'] = m.group(1)
@@ -69,11 +68,11 @@ def parse_material_fx(text: str) -> dict:
 
 
 # ============================================================
-# SSS_SKIN_TRANSMITTANCE 事前計算
+# SSS_SKIN_TRANSMITTANCE Pre-computation
 # ============================================================
 
 def eval_sss_transmittance(expr: str) -> str:
-    """SSS_SKIN_TRANSMITTANCE(x) を事前計算して float3(...) 文字列を返す。"""
+    """Pre-compute SSS_SKIN_TRANSMITTANCE(x) and return a float3(...) string."""
     m = re.match(r'SSS_SKIN_TRANSMITTANCE\(\s*([\d.]+)\s*\)', expr)
     if not m:
         return None
@@ -86,19 +85,19 @@ def eval_sss_transmittance(expr: str) -> str:
 
 
 # ============================================================
-# 値の正規化
+# Value Normalization
 # ============================================================
 
 def normalize_float3(ctype: str, val: str) -> str:
-    """const float3 の値を float3(x, y, z) 形式に正規化。"""
+    """Normalize a const float3 value to float3(x, y, z) format."""
     val = val.strip()
     if val.startswith('float3(') or val.startswith('float2('):
         return val
-    # SSS マクロ
+    # SSS macro
     sss = eval_sss_transmittance(val)
     if sss:
         return sss
-    # スカラー値 → float3(v, v, v)
+    # Scalar -> float3(v, v, v)
     try:
         v = float(val)
         return f'float3({v}, {v}, {v})'
@@ -107,12 +106,12 @@ def normalize_float3(ctype: str, val: str) -> str:
 
 
 def normalize_float(val: str) -> str:
-    """const float の値をそのまま返す。"""
+    """Return a const float value as-is."""
     return val.strip()
 
 
 # ============================================================
-# シェーディングモデル自動検出
+# Shading Model Auto-Detection
 # ============================================================
 
 SHADING_MODEL_NAMES = {
@@ -121,27 +120,27 @@ SHADING_MODEL_NAMES = {
 }
 
 def detect_shading_model(params: dict) -> int:
-    """ファイル内容からシェーディングモデルを推測する。
+    """Detect shading model from file contents.
 
-    ray-mmd では CUSTOM_ENABLE の値がシェーディングモデルIDに直接対応:
+    In ray-mmd, CUSTOM_ENABLE values map directly to shading model IDs:
       0=Default, 1=Skin, 3=Anisotropy, 5=Cloth, 7=Subsurface
-    EMISSIVE_ENABLE=1 の場合は Emissive (2)。
+    EMISSIVE_ENABLE=1 maps to Emissive (2).
     """
     custom_enable = int(params.get('CUSTOM_ENABLE', '0'))
     emissive_enable = int(params.get('EMISSIVE_ENABLE', '0'))
 
-    # CUSTOM_ENABLE が既知のシェーディングモデルIDに直接対応
+    # CUSTOM_ENABLE maps directly to known shading model IDs
     if custom_enable in (1, 3, 4, 5, 6, 7):
         return custom_enable
 
-    # EMISSIVE_ENABLE=1 で Emissive
+    # EMISSIVE_ENABLE=1 -> Emissive
     if emissive_enable == 1 and custom_enable == 0:
         return 2
 
     if custom_enable == 0:
         return 0
 
-    # include パスから推測 (フォールバック)
+    # Fallback: guess from include path
     inc = params.get('_include_path', '').lower()
     if 'skin' in inc:
         return 1
@@ -156,16 +155,16 @@ def detect_shading_model(params: dict) -> int:
     if 'anisotrop' in inc:
         return 3
 
-    # 判定不能
+    # Unable to determine
     return -1
 
 
 # ============================================================
-# 変換
+# Conversion
 # ============================================================
 
 def get_const(params: dict, name: str, default: str = '0') -> tuple:
-    """const 変数を取得。(type, value) を返す。"""
+    """Get a const variable. Returns (type, value)."""
     key = f'_const_{name}'
     if key in params:
         return params[key]
@@ -173,9 +172,9 @@ def get_const(params: dict, name: str, default: str = '0') -> tuple:
 
 
 def convert_map_from(val: int) -> int:
-    """MAP_FROM の値を MaskedMaterial 互換に変換。
-    0=無効, 1=外部ファイル → そのまま
-    2-9 (モデルテクスチャ等) → 0 (非対応)
+    """Convert MAP_FROM value to MaskedMaterial compatible value.
+    0=disabled, 1=external file -> pass through
+    2-9 (model texture, etc.) -> 0 (not supported)
     """
     if val in (0, 1):
         return val
@@ -183,7 +182,7 @@ def convert_map_from(val: int) -> int:
 
 
 def convert(params: dict, layer: int, shading_model: int) -> list:
-    """パラメータ辞書を MaskedMaterial L{N} 形式の行リストに変換。"""
+    """Convert parameter dictionary to MaskedMaterial L{N} format lines."""
     N = layer
     lines = []
     warnings = []
@@ -205,21 +204,21 @@ def convert(params: dict, layer: int, shading_model: int) -> list:
     out(f'#define L{N}_ALBEDO {albedo_str}')
 
     if albedo_from == 1:
-        # 外部ファイル → そのまま
+        # External file -> pass through
         out(f'#define L{N}_ALBEDO_MAP_FROM 1')
         albedo_file = params.get('ALBEDO_MAP_FILE', '"albedo.png"')
         out(f'#define L{N}_ALBEDO_MAP_FILE {albedo_file}')
         out(f'#define L{N}_ALBEDO_APPLY_DIFFUSE 0')
     elif albedo_from == 3:
-        # モデルテクスチャ → APPLY_DIFFUSE で代替
+        # Model texture -> use APPLY_DIFFUSE as substitute
         out(f'#define L{N}_ALBEDO_MAP_FROM 0')
         out(f'#define L{N}_ALBEDO_APPLY_DIFFUSE {albedo_apply_diffuse}')
         if albedo_apply_diffuse == 0:
-            warn('ALBEDO_MAP_FROM=3 but APPLY_DIFFUSE=0: モデルテクスチャが使われません')
+            warn('ALBEDO_MAP_FROM=3 but APPLY_DIFFUSE=0: model texture will not be used')
     elif albedo_from >= 2:
         out(f'#define L{N}_ALBEDO_MAP_FROM 0')
         out(f'#define L{N}_ALBEDO_APPLY_DIFFUSE {albedo_apply_diffuse}')
-        warn(f'ALBEDO_MAP_FROM={albedo_from} は MaskedMaterial 非対応 → 0 に変換')
+        warn(f'ALBEDO_MAP_FROM={albedo_from} not supported in MaskedMaterial -> converted to 0')
     else:
         out(f'#define L{N}_ALBEDO_MAP_FROM 0')
         out(f'#define L{N}_ALBEDO_APPLY_DIFFUSE {albedo_apply_diffuse}')
@@ -253,7 +252,7 @@ def convert(params: dict, layer: int, shading_model: int) -> list:
             out(f'#define L{N}_NORMAL_MAP_LOOP {normalize_float(loop)}')
 
     if int(params.get('NORMAL_MAP_FROM', '0')) >= 2:
-        warn(f'NORMAL_MAP_FROM={params["NORMAL_MAP_FROM"]} は非対応 → 無効化')
+        warn(f'NORMAL_MAP_FROM={params["NORMAL_MAP_FROM"]} not supported -> disabled')
 
     # --- Normal sub map ---
     normal_sub_from = convert_map_from(int(params.get('NORMAL_SUB_MAP_FROM', '0')))
@@ -289,9 +288,12 @@ def convert(params: dict, layer: int, shading_model: int) -> list:
         stype = params.get('SMOOTHNESS_MAP_TYPE', '0')
         if stype != '0':
             out(f'#define L{N}_SMOOTHNESS_MAP_TYPE {stype}')
+        _, sloop = get_const(params, 'smoothnessMapLoopNum', '1.0')
+        if sloop != '1.0':
+            out(f'#define L{N}_SMOOTHNESS_MAP_LOOP {normalize_float(sloop)}')
 
     if int(params.get('SMOOTHNESS_MAP_FROM', '0')) >= 2:
-        warn(f'SMOOTHNESS_MAP_FROM={params["SMOOTHNESS_MAP_FROM"]} は非対応 → 無効化')
+        warn(f'SMOOTHNESS_MAP_FROM={params["SMOOTHNESS_MAP_FROM"]} not supported -> disabled')
 
     _, metalness = get_const(params, 'metalness', '0.0')
     out(f'#define L{N}_METALNESS {normalize_float(metalness)}')
@@ -300,24 +302,36 @@ def convert(params: dict, layer: int, shading_model: int) -> list:
     if metal_from == 1:
         out(f'#define L{N}_METALNESS_MAP_FROM 1')
         out(f'#define L{N}_METALNESS_MAP_FILE {params.get("METALNESS_MAP_FILE", chr(34) + "metalness.png" + chr(34))}')
+        mswizzle = params.get('METALNESS_MAP_SWIZZLE', '0')
+        if mswizzle != '0':
+            out(f'#define L{N}_METALNESS_MAP_SWIZZLE {mswizzle}')
+        _, mloop = get_const(params, 'metalnessMapLoopNum', '1.0')
+        if mloop != '1.0':
+            out(f'#define L{N}_METALNESS_MAP_LOOP {normalize_float(mloop)}')
 
     _, spec_val = get_const(params, 'specular', '0.5')
-    # specular は MaskedMaterial では float スカラー
+    # specular is a float scalar in MaskedMaterial
     spec_str = normalize_float(spec_val)
     try:
         float(spec_str)
     except ValueError:
-        # float3(...) の場合、最初の値を使う
+        # If float3(...), use the first component
         m = re.match(r'float3\(([\d.]+)', spec_str)
         if m:
             spec_str = m.group(1)
-            warn('specular が float3 → 最初の成分をスカラーとして使用')
+            warn('specular is float3 -> using first component as scalar')
     out(f'#define L{N}_SPECULAR {spec_str}')
 
     spec_from = convert_map_from(int(params.get('SPECULAR_MAP_FROM', '0')))
     if spec_from == 1:
         out(f'#define L{N}_SPECULAR_MAP_FROM 1')
         out(f'#define L{N}_SPECULAR_MAP_FILE {params.get("SPECULAR_MAP_FILE", chr(34) + "specular.png" + chr(34))}')
+        spswizzle = params.get('SPECULAR_MAP_SWIZZLE', '0')
+        if spswizzle != '0':
+            out(f'#define L{N}_SPECULAR_MAP_SWIZZLE {spswizzle}')
+        _, sploop = get_const(params, 'specularMapLoopNum', '1.0')
+        if sploop != '1.0':
+            out(f'#define L{N}_SPECULAR_MAP_LOOP {normalize_float(sploop)}')
 
     # --- Occlusion ---
     occ_from = convert_map_from(int(params.get('OCCLUSION_MAP_FROM', '0')))
@@ -326,6 +340,12 @@ def convert(params: dict, layer: int, shading_model: int) -> list:
         out(f'// --- Occlusion ---')
         out(f'#define L{N}_OCCLUSION_MAP_FROM 1')
         out(f'#define L{N}_OCCLUSION_MAP_FILE {params.get("OCCLUSION_MAP_FILE", chr(34) + "occlusion.png" + chr(34))}')
+        oswizzle = params.get('OCCLUSION_MAP_SWIZZLE', '0')
+        if oswizzle != '0':
+            out(f'#define L{N}_OCCLUSION_MAP_SWIZZLE {oswizzle}')
+        _, oloop = get_const(params, 'occlusionMapLoopNum', '1.0')
+        if oloop != '1.0':
+            out(f'#define L{N}_OCCLUSION_MAP_LOOP {normalize_float(oloop)}')
 
     # --- Shading model ---
     out(f'')
@@ -334,8 +354,8 @@ def convert(params: dict, layer: int, shading_model: int) -> list:
         name = SHADING_MODEL_NAMES.get(shading_model, '?')
         out(f'#define L{N}_SHADING_MODEL {shading_model}  // {name}')
     else:
-        out(f'#define L{N}_SHADING_MODEL 0  // TODO: CUSTOM_ENABLE=1 検出、モデルIDを手動指定してください')
-        warn('CUSTOM_ENABLE=1 ですがシェーディングモデルを自動検出できません → 手動指定してください')
+        out(f'#define L{N}_SHADING_MODEL 0  // TODO: CUSTOM_ENABLE=1 detected, please specify model ID manually')
+        warn('CUSTOM_ENABLE=1 but shading model could not be auto-detected -> please specify manually with -s')
 
     # --- Emissive ---
     emissive_enable = int(params.get('EMISSIVE_ENABLE', '0'))
@@ -350,6 +370,9 @@ def convert(params: dict, layer: int, shading_model: int) -> list:
         if em_from == 1:
             out(f'#define L{N}_EMISSIVE_MAP_FROM 1')
             out(f'#define L{N}_EMISSIVE_MAP_FILE {params.get("EMISSIVE_MAP_FILE", chr(34) + "emissive.png" + chr(34))}')
+            _, emloop = get_const(params, 'emissiveMapLoopNum', '1.0')
+            if emloop != '1.0':
+                out(f'#define L{N}_EMISSIVE_MAP_LOOP {normalize_float(emloop)}')
     else:
         out(f'#define L{N}_EMISSIVE float3(0, 0, 0)')
         out(f'#define L{N}_EMISSIVE_INTENSITY 0.0')
@@ -363,6 +386,15 @@ def convert(params: dict, layer: int, shading_model: int) -> list:
         _, cb_val = get_const(params, 'customB', '0')
         cb_str = normalize_float3('float3', cb_val)
         out(f'#define L{N}_CUSTOM_B {cb_str}')
+
+        # Warn about unsupported CUSTOM_A/B texture maps
+        ca_map_from = int(params.get('CUSTOM_A_MAP_FROM', '0'))
+        cb_map_from = int(params.get('CUSTOM_B_MAP_FROM', '0'))
+        if ca_map_from != 0:
+            warn(f'CUSTOM_A_MAP_FROM={ca_map_from} not supported -> only constant CUSTOM_A is used')
+        if cb_map_from != 0:
+            cb_file = params.get('CUSTOM_B_MAP_FILE', '(unknown)')
+            warn(f'CUSTOM_B_MAP_FROM={cb_map_from} (file: {cb_file}) not supported -> only constant CUSTOM_B is used')
     else:
         out(f'#define L{N}_CUSTOM_A 0.0')
         out(f'#define L{N}_CUSTOM_B float3(0, 0, 0)')
@@ -371,23 +403,23 @@ def convert(params: dict, layer: int, shading_model: int) -> list:
 
 
 # ============================================================
-# メイン
+# Main
 # ============================================================
 
 def main():
     parser = argparse.ArgumentParser(
-        description='ray-mmd material_2.0.fx → MaskedMaterial レイヤー変換'
+        description='ray-mmd material_2.0.fx -> MaskedMaterial layer conversion'
     )
-    parser.add_argument('input', help='入力 .fx ファイルパス')
+    parser.add_argument('input', help='Input .fx file path')
     parser.add_argument('-l', '--layer', type=int, default=0,
-                        help='出力レイヤー番号 (0-7, デフォルト: 0)')
+                        help='Output layer number (0-7, default: 0)')
     parser.add_argument('-s', '--shading-model', type=int, default=None,
-                        help='シェーディングモデルID (省略時: 自動検出)')
+                        help='Shading model ID (default: auto-detect)')
     parser.add_argument('-o', '--output', default=None,
-                        help='出力ファイルパス (省略時: 標準出力)')
+                        help='Output file path (default: stdout)')
     args = parser.parse_args()
 
-    # 入力ファイル読み込み
+    # Read input file
     input_path = Path(args.input)
     encodings = ['utf-8', 'utf-8-sig', 'cp932', 'shift_jis', 'latin-1']
     text = None
@@ -398,22 +430,22 @@ def main():
         except (UnicodeDecodeError, UnicodeError):
             continue
     if text is None:
-        print(f'エラー: {input_path} を読み込めません', file=sys.stderr)
+        print(f'Error: cannot read {input_path}', file=sys.stderr)
         sys.exit(1)
 
-    # 解析
+    # Parse
     params = parse_material_fx(text)
 
-    # シェーディングモデル
+    # Shading model
     if args.shading_model is not None:
         shading_model = args.shading_model
     else:
         shading_model = detect_shading_model(params)
 
-    # 変換
+    # Convert
     output_lines, warnings = convert(params, args.layer, shading_model)
 
-    # ヘッダコメント
+    # Header comment
     header = [
         f'// Converted from: {input_path.name}',
         f'// Target layer: L{args.layer}',
@@ -422,18 +454,18 @@ def main():
 
     result = '\n'.join(header + output_lines) + '\n'
 
-    # 出力
+    # Output
     if args.output:
         out_path = Path(args.output)
         out_path.write_text(result, encoding='utf-8', newline='\n')
-        print(f'出力: {out_path}', file=sys.stderr)
+        print(f'Output: {out_path}', file=sys.stderr)
     else:
         print(result)
 
-    # 警告
+    # Warnings
     if warnings:
         print('', file=sys.stderr)
-        print('=== 警告 ===', file=sys.stderr)
+        print('=== Warnings ===', file=sys.stderr)
         for w in warnings:
             print(f'  ! {w}', file=sys.stderr)
 

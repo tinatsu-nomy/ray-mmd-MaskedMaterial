@@ -118,14 +118,15 @@ MaskedMaterial must be assigned to the **MaterialMap** pass in ray-mmd.
 
 ```
 Effect Mapping Dialog:
-┌─ Main ─┬─ MaterialMap ─┬─ Edge ─┬─ Shadow ─┐
-│        │  <- HERE      │        │          │
-├────────┴───────────────┴────────┴──────────┤
-│ Model Name                                  │
-│  ├ Subset 0: (none)                         │
-│  ├ Subset 1: masked_material.fx  <- assign  │
-│  └ Subset 2: (none)                         │
-└─────────────────────────────────────────────┘
++--------+---------------+--------+----------+
+| Main   | MaterialMap   | Edge   | Shadow   |
+|        |  <- HERE      |        |          |
++--------+---------------+--------+----------+
+| Model Name                                  |
+|   Subset 0: (none)                          |
+|   Subset 1: masked_material.fx  <- assign   |
+|   Subset 2: (none)                          |
++---------------------------------------------+
 ```
 
 > **Important**: Always assign `masked_material.fx` to the **MaterialMap tab**.  
@@ -430,8 +431,8 @@ Material types found in ray-mmd's `Materials/` directory and their conversion co
 |:---|:---:|:---:|:---|:---:|
 | **Standard** | 0 | 0 | Basic PBR, no special settings | OK |
 | **Skin** | 1 | 1 | SSS_SKIN_TRANSMITTANCE, ALBEDO_SUB_ENABLE=4, skin.png | OK |
-| **Hair (Anisotropy)** | 3 | 3 | CUSTOM_B_MAP_FROM=1 (shift2.png) | OK |
-| **Hair (SSS)** | 7 | 7 | CUSTOM_B_MAP_FROM=3 | OK |
+| **Hair (Anisotropy)** | 3 | 3 | CUSTOM_B_MAP_FROM=1 (shift2.png) | Partial* |
+| **Hair (SSS)** | 7 | 7 | CUSTOM_B_MAP_FROM=3 | Partial* |
 | **Cloth** | 5 | 5 | Fabric normal map, sheen color | OK |
 | **ClearCoat** | 0 | 0 | metalness=1.0, high smoothness | OK |
 | **Metal** | 0 | 0 | ALBEDO_MAP_FROM=0, fixed albedo color | OK |
@@ -442,6 +443,9 @@ Material types found in ray-mmd's `Materials/` directory and their conversion co
 | **Programmable** | N/A | N/A | Water/Wetness, custom fxsub | NG (custom shader) |
 
 > `convert_material.py` can automatically convert all types marked OK.  
+> \*Partial: Hair materials use `CUSTOM_B_MAP_FROM` (external texture for shift/SSS data).  
+> MaskedMaterial currently only supports constant `CUSTOM_B` values, not texture-mapped CUSTOM_B.  
+> The converter will output the constant `CUSTOM_B` value, warn about the unsupported texture map, and drop the reference.  
 > Editor types (PMX controller linked) and Programmable types (Water/Wetness) are not convertible.
 
 ---
@@ -610,10 +614,10 @@ MaskedMaterial is assigned to the **MaterialMap tab**.
 
 ```
 MME Effect Mapping:
-┌──────────────┬──────────────────────────────────────────┐
-│ Main tab     │ main.fx (forward rendering)              │
-│ MaterialMap  │ masked_material.fx (G-Buffer write)      │
-└──────────────┴──────────────────────────────────────────┘
++--------------+------------------------------------------+
+| Main tab     | main.fx (forward rendering)              |
+| MaterialMap  | masked_material.fx (G-Buffer write)      |
++--------------+------------------------------------------+
 ```
 
 ### Main Pass Variants
@@ -661,6 +665,12 @@ MME Effect Mapping:
 5. **Normal map TYPE limitation**  
    - Per-layer normal maps support only TYPE 0 (RGB) and TYPE 1 (RG compressed)
    - TYPE 2 (grayscale low quality) and TYPE 3 (grayscale high quality) are not supported
+
+6. **CUSTOM_A / CUSTOM_B are constants only (no texture map support)**  
+   - `CUSTOM_A_MAP_FROM` and `CUSTOM_B_MAP_FROM` from ray-mmd are not supported
+   - Hair (Anisotropy) materials using `CUSTOM_B_MAP_FROM=1` (shift texture) will lose the texture reference
+   - Hair (SSS) materials using `CUSTOM_B_MAP_FROM=3` will also lose the texture reference
+   - Only constant `CUSTOM_A` / `CUSTOM_B` values are supported per layer
 
 ---
 
